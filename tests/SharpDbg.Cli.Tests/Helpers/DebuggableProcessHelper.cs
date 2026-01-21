@@ -14,10 +14,11 @@ public static class DebuggableProcessHelper
 			StartInfo = new ProcessStartInfo
 			{
 				FileName = filePath,
-				RedirectStandardInput = false,
-				RedirectStandardOutput = false,
-				UseShellExecute = useShellExecute,
-				CreateNoWindow = false
+				RedirectStandardInput = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				UseShellExecute = false,
+				CreateNoWindow = true
 			}
 		};
 		if (startSuspended) process.StartInfo.EnvironmentVariables["DOTNET_DefaultDiagnosticPortSuspend"] = "1";

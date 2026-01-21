@@ -17,14 +17,8 @@ public static class InMemoryDebugAdapterHelper
 		adapter.Initialize(stdInClient, stdOutServer);
 		adapter.Protocol.VerifySynchronousOperationAllowed();
 		adapter.Protocol.Run();
-		_ = Task.Run(() =>
-		{
-			adapter.Protocol.WaitForReader();
-			stdInServer.Dispose();
-			stdInClient.Dispose();
-			stdOutServer.Dispose();
-			stdOutClient.Dispose();
-		});
+		// Do not dispose the pipe streams from a background task here.
+		// Caller is responsible for disposing the returned streams and adapter.
 
 		return (stdInServer, stdOutClient, adapter);
 

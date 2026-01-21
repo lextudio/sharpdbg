@@ -17,13 +17,13 @@ public class MiModeEvaluateExpressionTests
         using var writer = miProcess.StandardInput;
         using var reader = miProcess.StandardOutput;
 
-        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"MI ready: {ready}");
 
         // Set a breakpoint in the test app and run it, then evaluate against the stopped frame
         var bpPath = Path.JoinFromGitRoot("test", "mi-integration", "TestApp", "Program.cs");
         await writer.WriteLineAsync($"1-break-insert {bpPath}:12");
-        var bpResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var bpResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"BreakResp: {bpResp}");
         Assert.Contains("^done", bpResp);
 
@@ -35,7 +35,7 @@ public class MiModeEvaluateExpressionTests
         string? stoppedLine = null;
         for (int i = 0; i < 20; i++)
         {
-            var l = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+            var l = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
             Console.WriteLine($"MI line: {l}");
             if (l != null && l.StartsWith("*stopped"))
             {
@@ -47,7 +47,7 @@ public class MiModeEvaluateExpressionTests
 
         // Query stack frames and parse the returned frame id
         await writer.WriteLineAsync("3-stack-list-frames");
-        var framesResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var framesResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"FramesResp: {framesResp}");
         Assert.Contains("^done", framesResp);
 
@@ -58,7 +58,7 @@ public class MiModeEvaluateExpressionTests
 
         // Evaluate an expression using the real frame id (we'll evaluate something simple like '1+2' to force interpreter path)
         await writer.WriteLineAsync($"4-data-evaluate-expression --expression=\"1+2\" --frame={frameIdStr}");
-        var evalResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var evalResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"EvalResp: {evalResp}");
         Assert.Contains("^done", evalResp);
         await writer.WriteLineAsync("2-gdb-exit");

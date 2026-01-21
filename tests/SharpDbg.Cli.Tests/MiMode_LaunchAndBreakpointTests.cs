@@ -230,13 +230,13 @@ public class MiModeLaunchAndBreakpointTests
         using var reader = miProcess.StandardOutput;
 
         // Wait for protocol ready line
-        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"MI ready: {ready}");
 
         // Insert breakpoint
         var bpPath = Path.JoinFromGitRoot("test", "mi-integration", "TestApp", "Program.cs");
         await writer.WriteLineAsync($"1-break-insert {bpPath}:12");
-        var resp1 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var resp1 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"Resp1: {resp1}");
         Assert.Contains("^done", resp1);
 
@@ -248,7 +248,7 @@ public class MiModeLaunchAndBreakpointTests
         string? stoppedLine = null;
         for (int i = 0; i < 20; i++)
         {
-            var l = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+            var l = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
             Console.WriteLine($"MI line: {l}");
             if (l != null && l.StartsWith("*stopped"))
             {
@@ -260,13 +260,13 @@ public class MiModeLaunchAndBreakpointTests
 
         // Delete breakpoint
         await writer.WriteLineAsync("3-break-delete 1");
-        var resp3 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var resp3 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"Resp3: {resp3}");
         Assert.Contains("^done", resp3);
 
         // Exit MI
         await writer.WriteLineAsync("4-gdb-exit");
-        var resp4 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var resp4 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"Resp4: {resp4}");
 
         miProcess.Kill(true);

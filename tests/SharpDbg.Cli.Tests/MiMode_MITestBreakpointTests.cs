@@ -15,7 +15,7 @@ public class MiMode_MITestBreakpointTests
         using var writer = miProcess.StandardInput;
         using var reader = miProcess.StandardOutput;
 
-        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5));
+        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Console.WriteLine($"MI ready: {ready}");
 
         // Insert first breakpoint (BREAK1) and run
@@ -57,7 +57,7 @@ public class MiMode_MITestBreakpointTests
         {
             while (!cts.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(1));
+                var line = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
                 if (line == null) continue;
                 // Return a line that looks like MI output (result '^', async '*', notifications '=', '~')
                 if (line.StartsWith("^") || line.StartsWith("*") || line.StartsWith("=") || line.StartsWith("~") || System.Text.RegularExpressions.Regex.IsMatch(line, "^\\d+\\^"))
