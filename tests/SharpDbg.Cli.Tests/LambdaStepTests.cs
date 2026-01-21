@@ -18,7 +18,7 @@ public class LambdaStepTests(ITestOutputHelper testOutputHelper)
 		    .WithAttachRequest(p2.Id)
 		    .WaitForInitializedEvent(initializedEventTcs);
 	    debugProtocolHost
-		    .WithBreakpointsRequest([10, 13], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Lambdas", "MyLambdaClass.cs"))
+			.WithBreakpointsRequest([10, 13], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Lambdas", "MyLambdaClass.cs"))
 		    .WithConfigurationDoneRequest()
 		    .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
@@ -35,7 +35,7 @@ public class LambdaStepTests(ITestOutputHelper testOutputHelper)
 	    stopInfo2.line.Should().Be(10);
 
 	    // Set breakpoint at lambda declaration
-	    debugProtocolHost.WithBreakpointsRequest(8, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Lambdas", "MyLambdaClass.cs"));
+		debugProtocolHost.WithBreakpointsRequest(8, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Lambdas", "MyLambdaClass.cs"));
 
 	    // Continue (while loop), and we should hit the lambda declaration breakpoint
 	    var stoppedEvent3 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(stoppedEventTcs);

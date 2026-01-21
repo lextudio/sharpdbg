@@ -21,7 +21,7 @@ public class AsyncVariablesTests(ITestOutputHelper testOutputHelper)
 		    .WithAttachRequest(p2.Id)
 		    .WaitForInitializedEvent(initializedEventTcs);
 	    debugProtocolHost
-		    .WithBreakpointsRequest(11, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"))
+			.WithBreakpointsRequest(11, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"))
 		    .WithConfigurationDoneRequest()
 		    .WithOptionalResumeRuntime(p2.Id, startSuspended);
 

@@ -18,7 +18,7 @@ public class AsyncStepTests(ITestOutputHelper testOutputHelper)
 		    .WithAttachRequest(p2.Id)
 		    .WaitForInitializedEvent(initializedEventTcs);
 	    debugProtocolHost
-		    .WithBreakpointsRequest(9, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"))
+			.WithBreakpointsRequest(9, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"))
 		    .WithConfigurationDoneRequest()
 		    .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
@@ -27,7 +27,7 @@ public class AsyncStepTests(ITestOutputHelper testOutputHelper)
 	    stopInfo.filePath.Should().EndWith("MyAsyncClass.cs");
 	    stopInfo.line.Should().Be(9);
 
-	    debugProtocolHost.WithClearBreakpointsRequest(Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"));
+		debugProtocolHost.WithClearBreakpointsRequest(Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"));
 
 	    // step over sync
 	    var stoppedEvent2 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(stoppedEventTcs);
