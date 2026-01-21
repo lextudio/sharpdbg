@@ -25,16 +25,19 @@ public static partial class TestHelper
 		return (debugProtocolHost, initializedEventTcs, stoppedEventTcs, new OopOrInProcDebugAdapter(process), debuggableProcess);
 	}
 
-	public static (DebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer, OopOrInProcDebugAdapter DebugAdapter, Process DebuggableProcess) GetRunningDebugProtocolHostInProc(ITestOutputHelper testOutputHelper, bool startSuspended)
+	public static (DebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer, RunningInProcAdapter RunningAdapter, OopOrInProcDebugAdapter DebugAdapter, Process DebuggableProcess) GetRunningDebugProtocolHostInProc(ITestOutputHelper testOutputHelper, bool startSuspended)
 	{
-		var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+		var runningAdapter = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+		var adapter = runningAdapter.Adapter;
+		var input = runningAdapter.StdInServer; // server is the write end for test client
+		var output = runningAdapter.StdOutClient; // client side read for test
 		var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
 		var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		var stoppedEventTcs = new TcsContainer { Tcs = new TaskCompletionSource<StoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously) };
 		debugProtocolHost.RegisterEventType<StoppedEvent>(@event => stoppedEventTcs.Tcs.TrySetResult(@event));
 		debugProtocolHost.Run();
-		return (debugProtocolHost, initializedEventTcs, stoppedEventTcs, new OopOrInProcDebugAdapter(adapter), debuggableProcess);
+		return (debugProtocolHost, initializedEventTcs, stoppedEventTcs, runningAdapter, new OopOrInProcDebugAdapter(adapter), debuggableProcess);
 	}
 
 	public static DebugProtocolHost WithInitializeRequest(this DebugProtocolHost debugProtocolHost)

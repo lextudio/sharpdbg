@@ -9,9 +9,10 @@ public class AsyncStepTests(ITestOutputHelper testOutputHelper)
     public async Task SharpDbgCli_StepRequests_InAsyncMethod_Returns_StoppedEventsAtCorrectLocation()
     {
 	    var startSuspended = true;
-	    var (debugProtocolHost, initializedEventTcs, stoppedEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHostInProc(testOutputHelper, startSuspended);
-	    using var _ = adapter;
-	    using var __ = new ProcessKiller(p2);
+		var (debugProtocolHost, initializedEventTcs, stoppedEventTcs, runningAdapter, adapter, p2) = TestHelper.GetRunningDebugProtocolHostInProc(testOutputHelper, startSuspended);
+		using var _running = runningAdapter;
+		using var _adapter = adapter;
+		using var __ = new ProcessKiller(p2);
 
 	    await debugProtocolHost
 		    .WithInitializeRequest()

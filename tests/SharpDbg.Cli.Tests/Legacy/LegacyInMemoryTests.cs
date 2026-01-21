@@ -13,14 +13,17 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
     {
 	    var startSuspended = false;
 	    var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
-	    DebugAdapter? debugAdapter = null;
+		DebugAdapter? debugAdapter = null;
+		RunningInProcAdapter? runningAdapter = null;
 	    try
 	    {
-		    var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		    var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
-		    debugAdapter = adapter;
+			var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			runningAdapter = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+			var input = runningAdapter.StdInServer;
+			var output = runningAdapter.StdOutClient;
+			debugAdapter = runningAdapter.Adapter;
 
-		    var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
+			var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		    var stoppedEventTcs = new TaskCompletionSource<StoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
 		    debugProtocolHost.RegisterEventType<StoppedEvent>(@event => stoppedEventTcs.TrySetResult(@event));
 			debugProtocolHost.Run();
@@ -67,11 +70,12 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
 		    variables.Should().HaveCount(10);
 		    variables.Should().BeEquivalentTo(expectedVariables);
 	    }
-	    finally
-	    {
-		    debuggableProcess.Kill();
-		    debugAdapter?.Protocol.Stop();
-	    }
+		finally
+		{
+			debuggableProcess.Kill();
+			// Dispose the running adapter which closes streams and waits for protocol reader to finish
+			runningAdapter?.Dispose();
+		}
     }
 
     [Fact(Skip = "Legacy")]
@@ -79,14 +83,17 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
     {
 	    var startSuspended = false;
 	    var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
-	    DebugAdapter? debugAdapter = null;
+		DebugAdapter? debugAdapter = null;
+		RunningInProcAdapter? runningAdapter = null;
 	    try
 	    {
-		    var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		    var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
-		    debugAdapter = adapter;
+			var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			runningAdapter = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+			var input = runningAdapter.StdInServer;
+			var output = runningAdapter.StdOutClient;
+			debugAdapter = runningAdapter.Adapter;
 
-		    var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
+			var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		    var stoppedEventTcs = new TaskCompletionSource<StoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
 		    debugProtocolHost.RegisterEventType<StoppedEvent>(@event => stoppedEventTcs.TrySetResult(@event));
 		    debugProtocolHost.Run();
@@ -126,11 +133,11 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
 		    //await Verify(nestedVariables)
 		    ;
 	    }
-	    finally
-	    {
-		    debuggableProcess.Kill();
-		    debugAdapter?.Protocol.Stop();
-	    }
+		finally
+		{
+			debuggableProcess.Kill();
+			runningAdapter?.Dispose();
+		}
     }
 
     [Fact(Skip = "Legacy")]
@@ -138,14 +145,17 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
     {
 	    var startSuspended = false;
 	    var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
-	    DebugAdapter? debugAdapter = null;
+		DebugAdapter? debugAdapter = null;
+		RunningInProcAdapter? runningAdapter = null;
 	    try
 	    {
-		    var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		    var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
-		    debugAdapter = adapter;
+			var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			runningAdapter = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+			var input = runningAdapter.StdInServer;
+			var output = runningAdapter.StdOutClient;
+			debugAdapter = runningAdapter.Adapter;
 
-		    var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
+			var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		    var stoppedEventTcs = new TcsContainer { Tcs = new TaskCompletionSource<StoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously) };
 		    debugProtocolHost.RegisterEventType<StoppedEvent>(@event => stoppedEventTcs.Tcs.SetResult(@event));
 			debugProtocolHost.Run();
@@ -183,11 +193,11 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
 		    }
 		    //lineAfterNext.Should().Be(currentLine + 1);
 	    }
-	    finally
-	    {
-		    debuggableProcess.Kill();
-		    debugAdapter?.Protocol.Stop();
-	    }
+		finally
+		{
+			debuggableProcess.Kill();
+			runningAdapter?.Dispose();
+		}
     }
 
     [Fact(Skip = "Legacy")]
@@ -195,14 +205,17 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
     {
 	    var startSuspended = false;
 	    var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
-	    DebugAdapter? debugAdapter = null;
+		DebugAdapter? debugAdapter = null;
+		RunningInProcAdapter? runningAdapter = null;
 	    try
 	    {
-		    var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		    var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
-		    debugAdapter = adapter;
+			var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			runningAdapter = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+			var input = runningAdapter.StdInServer;
+			var output = runningAdapter.StdOutClient;
+			debugAdapter = runningAdapter.Adapter;
 
-		    var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
+			var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		    var stoppedEventTcs = new TaskCompletionSource<StoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
 		    debugProtocolHost.RegisterEventType<StoppedEvent>(@event => stoppedEventTcs.TrySetResult(@event));
 			debugProtocolHost.Run();
@@ -242,10 +255,10 @@ public class LegacyInMemoryTests(ITestOutputHelper testOutputHelper)
 		    var staticMembersVariable = debugProtocolHost.SendRequestSync(new VariablesRequest { VariablesReference = staticMembersPseudoVariable.VariablesReference });
 		    ;
 	    }
-	    finally
-	    {
-		    debuggableProcess.Kill();
-		    debugAdapter?.Protocol.Stop();
-	    }
+		finally
+		{
+			debuggableProcess.Kill();
+			runningAdapter?.Dispose();
+		}
     }
 }
