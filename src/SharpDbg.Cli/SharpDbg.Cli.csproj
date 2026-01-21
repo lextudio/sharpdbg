@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpDbg.Application\SharpDbg.Application.csproj" />
+    <ProjectReference Include="..\SharpDbg.Infrastructure\SharpDbg.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -56,10 +56,10 @@ class Program
 
 		Log($"Starting SharpDbg - Interpreter: {interpreter}");
 
-		if (interpreter != "vscode")
+		if (interpreter != "vscode" && interpreter != "mi")
 		{
 			Console.Error.WriteLine($"Unsupported interpreter: {interpreter}");
-			Console.Error.WriteLine("Currently only --interpreter=vscode is supported");
+			Console.Error.WriteLine("Supported interpreters: --interpreter=vscode or --interpreter=mi");
 			return 1;
 		}
 
@@ -78,18 +78,28 @@ class Program
 			var inputStream = Console.OpenStandardInput();
 			var outputStream = Console.OpenStandardOutput();
 
-			// Create the debug adapter
-			var adapter = new DebugAdapter(Log);
+			if (interpreter == "vscode")
+			{
+				// Create the debug adapter
+				var adapter = new DebugAdapter(Log);
 
-			// Initialize the protocol client and start it
-			adapter.Initialize(inputStream, outputStream);
+				// Initialize the protocol client and start it
+				adapter.Initialize(inputStream, outputStream);
 
-			Log("Protocol server starting...");
-			// Run() starts the protocol client's message loop in a background thread
-			adapter.Protocol.Run();
-			// WaitForReader() blocks until the input stream is closed (client disconnects)
-			adapter.Protocol.WaitForReader();
-			Log("Protocol server stopped");
+				Log("Protocol server starting...");
+				// Run() starts the protocol client's message loop in a background thread
+				adapter.Protocol.Run();
+				// WaitForReader() blocks until the input stream is closed (client disconnects)
+				adapter.Protocol.WaitForReader();
+				Log("Protocol server stopped");
+			}
+			else if (interpreter == "mi")
+			{
+				// Minimal MI mode: create the ManagedDebugger and run a tiny MI handler
+				var managedDebugger = new SharpDbg.Infrastructure.Debugger.ManagedDebugger(Log);
+				// MiProtocol is a minimal MI subset implemented in SharpDbg.Cli
+				SharpDbg.Cli.MiProtocol.Run(managedDebugger);
+			}
 
 			return 0;
 		}
