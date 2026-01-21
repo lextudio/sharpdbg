@@ -28,7 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
-	<PackageReference Include="Krafs.Publicizer" Version="2.3.0">
+    <PackageReference Include="Krafs.Publicizer" Version="2.3.0">
 	 <PrivateAssets>all</PrivateAssets>
 	 <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 	</PackageReference>
@@ -38,6 +38,7 @@
     <PackageReference Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" Version="18.0.10427.1" />
     <PackageReference Include="Verify.XunitV3" Version="31.8.0" />
     <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.1" />
+    <PackageReference Include="xunit.abstractions" Version="2.0.3" />
   </ItemGroup>
 
   <ItemGroup>

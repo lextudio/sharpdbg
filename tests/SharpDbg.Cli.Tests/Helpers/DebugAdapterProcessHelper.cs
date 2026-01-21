@@ -27,6 +27,26 @@ public static class DebugAdapterProcessHelper
 		process.Start();
 		return process;
 	}
+
+	public static Process GetMiProcess()
+	{
+		var process = new Process
+		{
+			StartInfo = new ProcessStartInfo
+			{
+				FileName = Path.JoinFromGitRoot("artifacts", "bin", "SharpDbg.Cli", "debug", OperatingSystem.IsWindows() ? "SharpDbg.Cli.exe" : "SharpDbg.Cli"),
+				Arguments = "--interpreter=mi",
+				RedirectStandardInput = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				UseShellExecute = false,
+				CreateNoWindow = true
+			}
+		};
+		if (File.Exists(process.StartInfo.FileName) is false) throw new FileNotFoundException("SharpDbg executable not found", process.StartInfo.FileName);
+		process.Start();
+		return process;
+	}
 	public static DebugProtocolHost GetDebugProtocolHost(Process process, ITestOutputHelper testOutputHelper, TaskCompletionSource? initializedEventTcs = null) =>
 		GetDebugProtocolHost(process.StandardInput.BaseStream, process.StandardOutput.BaseStream, testOutputHelper, initializedEventTcs);
 
