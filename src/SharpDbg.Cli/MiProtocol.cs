@@ -129,6 +129,33 @@ internal static class MiProtocol
                     debugger.Continue();
                     _writer.WriteLine($"{token}^running");
                 }
+                else if (cmd.StartsWith("exec-next") || cmd.StartsWith("next"))
+                {
+                    // Step over (next line) - use the last stopped thread or thread 1
+                    var argsMap = ParseArgs(cmd);
+                    int threadId = _lastStoppedThreadId != 0 ? _lastStoppedThreadId : 1;
+                    if (argsMap.TryGetValue("thread", out var tstr) && int.TryParse(tstr, out var tid)) threadId = tid;
+                    debugger.StepNext(threadId);
+                    _writer.WriteLine($"{token}^running");
+                }
+                else if (cmd.StartsWith("exec-step") || cmd.StartsWith("step"))
+                {
+                    // Step into - use the last stopped thread or thread 1
+                    var argsMap = ParseArgs(cmd);
+                    int threadId = _lastStoppedThreadId != 0 ? _lastStoppedThreadId : 1;
+                    if (argsMap.TryGetValue("thread", out var tstr) && int.TryParse(tstr, out var tid)) threadId = tid;
+                    debugger.StepIn(threadId);
+                    _writer.WriteLine($"{token}^running");
+                }
+                else if (cmd.StartsWith("exec-finish") || cmd.StartsWith("finish"))
+                {
+                    // Step out - use the last stopped thread or thread 1
+                    var argsMap = ParseArgs(cmd);
+                    int threadId = _lastStoppedThreadId != 0 ? _lastStoppedThreadId : 1;
+                    if (argsMap.TryGetValue("thread", out var tstr) && int.TryParse(tstr, out var tid)) threadId = tid;
+                    debugger.StepOut(threadId);
+                    _writer.WriteLine($"{token}^running");
+                }
                 else if (cmd.StartsWith("data-evaluate-expression") || cmd.StartsWith("p "))
                 {
                     // support: data-evaluate-expression --expression="..." [--frame=N]

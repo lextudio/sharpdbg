@@ -218,20 +218,20 @@ namespace SharpDbg.Cli.Tests;
 
 public class MiModeLaunchAndBreakpointTests
 {
-    // Use Console.WriteLine for test output
+    readonly ITestOutputHelper _output;
+    public MiModeLaunchAndBreakpointTests(ITestOutputHelper output) => _output = output;
 
     [Fact]
     public async Task MiMode_BreakInsert_Run_Delete_Works()
     {
         // Ensure artifacts built before running tests - the referenced test app is built via ProjectReference
         var miProcess = Helpers.DebugAdapterProcessHelper.GetMiProcess();
-
         using var writer = miProcess.StandardInput;
         using var reader = miProcess.StandardOutput;
 
         // Wait for protocol ready line
         var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        Console.WriteLine($"MI ready: {ready}");
+        _output.WriteLine($"MI ready: {ready}");
 
         // Insert breakpoint
         var bpPath = Path.JoinFromGitRoot("test", "mi-integration", "TestApp", "Program.cs");
@@ -267,7 +267,7 @@ public class MiModeLaunchAndBreakpointTests
         // Exit MI
         await writer.WriteLineAsync("4-gdb-exit");
         var resp4 = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        Console.WriteLine($"Resp4: {resp4}");
+        _output.WriteLine($"Resp4: {resp4}");
 
         miProcess.Kill(true);
     }

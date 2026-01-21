@@ -8,6 +8,9 @@ namespace SharpDbg.Cli.Tests;
 // Partial port of netcoredbg/test-suite/MITestBreakpoint/Program.cs
 public class MiMode_MITestBreakpointTests
 {
+    readonly ITestOutputHelper _output;
+    public MiMode_MITestBreakpointTests(ITestOutputHelper output) => _output = output;
+
     [Fact]
     public async Task MITestBreakpoint_CoreFlow_Works()
     {
@@ -16,7 +19,7 @@ public class MiMode_MITestBreakpointTests
         using var reader = miProcess.StandardOutput;
 
         var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        Console.WriteLine($"MI ready: {ready}");
+        _output.WriteLine($"MI ready: {ready}");
 
         // Insert first breakpoint (BREAK1) and run
         var bpPath = Path.JoinFromGitRoot("test", "mi-integration", "TestApp", "Program.cs");
@@ -46,7 +49,7 @@ public class MiMode_MITestBreakpointTests
         // Exit MI
         await writer.WriteLineAsync("4-gdb-exit");
         var exitResp = await ReadMiResponseAsync(reader, 10);
-        Console.WriteLine($"ExitResp: {exitResp}");
+        _output.WriteLine($"ExitResp: {exitResp}");
         miProcess.Kill(true);
     }
 

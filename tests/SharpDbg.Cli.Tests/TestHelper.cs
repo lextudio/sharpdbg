@@ -102,8 +102,21 @@ public static partial class TestHelper
 
 	public static DebugProtocolHost WithOptionalResumeRuntime(this DebugProtocolHost debugProtocolHost, int processId, bool startSuspended)
 	{
-	    // DiagnosticsClient.ResumeRuntime seems to have a different implementation on MacOS - it will throw if the runtime is not paused...
-	    if (startSuspended) new DiagnosticsClient(processId).ResumeRuntime();
+	// DiagnosticsClient.ResumeRuntime can fail on some platforms or when the diagnostics
+	// IPC endpoint is not available. This is optional for tests, so swallow errors
+	// rather than letting the test fail.
+	if (startSuspended)
+	{
+		try
+		{
+			new DiagnosticsClient(processId).ResumeRuntime();
+		}
+		catch (Exception ex)
+		{
+			// Best-effort: log to console for diagnostics but continue test execution
+			Console.WriteLine($"WithOptionalResumeRuntime: ResumeRuntime failed: {ex.GetType().Name}: {ex.Message}");
+		}
+	}
 		return debugProtocolHost;
 	}
 

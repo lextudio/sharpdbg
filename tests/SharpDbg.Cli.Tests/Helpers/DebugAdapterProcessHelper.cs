@@ -47,6 +47,14 @@ public static class DebugAdapterProcessHelper
 		process.Start();
 		return process;
 	}
+
+	public static (System.IO.TextWriter Writer, System.IO.TextReader Reader, RunningInProcAdapter Adapter) GetInProcMiStreams(ITestOutputHelper testOutputHelper)
+	{
+		var running = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+		var writer = new System.IO.StreamWriter(running.StdInServer) { AutoFlush = true };
+		var reader = new System.IO.StreamReader(running.StdOutClient);
+		return (writer, reader, running);
+	}
 	public static DebugProtocolHost GetDebugProtocolHost(Process process, ITestOutputHelper testOutputHelper, TaskCompletionSource? initializedEventTcs = null) =>
 		GetDebugProtocolHost(process.StandardInput.BaseStream, process.StandardOutput.BaseStream, testOutputHelper, initializedEventTcs);
 
