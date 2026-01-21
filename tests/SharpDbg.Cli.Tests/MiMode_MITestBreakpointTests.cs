@@ -18,18 +18,18 @@ public class MiMode_MITestBreakpointTests
         using var writer = miProcess.StandardInput;
         using var reader = miProcess.StandardOutput;
 
-        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var ready = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"MI ready: {ready}");
 
         // Insert first breakpoint (BREAK1) and run
-        var bpPath = Path.JoinFromGitRoot("test", "mi-integration", "TestApp", "Program.cs");
+        var bpPath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestApp", "Program.cs" });
         await writer.WriteLineAsync($"1-break-insert {bpPath}:12");
         var bpResp = await ReadMiResponseAsync(reader, 5);
         Console.WriteLine($"BreakResp: {bpResp}");
         Assert.Contains("^done", bpResp);
 
         // Run the program using the native host executable (not dotnet CLI)
-        var appPath = Path.JoinFromGitRoot("artifacts", "bin", "MiIntegrationTestApp", "debug", "MiIntegrationTestApp");
+        var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestApp", "debug", "MiIntegrationTestApp" });
         await writer.WriteLineAsync($"2-exec-run --program=\"{appPath}\"");
 
         // Attempt to read exec-run response or stopped notification (be tolerant)
@@ -60,7 +60,7 @@ public class MiMode_MITestBreakpointTests
         {
             while (!cts.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+                var line = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
                 if (line == null) continue;
                 // Return a line that looks like MI output (result '^', async '*', notifications '=', '~')
                 if (line.StartsWith("^") || line.StartsWith("*") || line.StartsWith("=") || line.StartsWith("~") || System.Text.RegularExpressions.Regex.IsMatch(line, "^\\d+\\^"))

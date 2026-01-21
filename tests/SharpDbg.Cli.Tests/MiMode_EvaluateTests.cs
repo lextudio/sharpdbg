@@ -17,22 +17,22 @@ public class MiMode_EvaluateTests
         using var writer = miProcess.StandardInput;
         using var reader = miProcess.StandardOutput;
 
-        var ready = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var ready = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"MI ready: {ready}");
 
-        var bpPath = Path.JoinFromGitRoot("test", "mi-integration", "TestApp", "Program.cs");
+        var bpPath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestApp", "Program.cs" });
         await writer.WriteLineAsync($"1-break-insert {bpPath}:12");
-        var bpResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var bpResp = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"BreakResp: {bpResp}");
         Assert.Contains("^done", bpResp);
 
-        var appPath = Path.JoinFromGitRoot("artifacts", "bin", "MiIntegrationTestApp", "debug", "MiIntegrationTestApp");
+        var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestApp", "debug", "MiIntegrationTestApp" });
         await writer.WriteLineAsync($"2-exec-run --program=\"{appPath}\"");
 
         string? stoppedLine = null;
         for (int i = 0; i < 20; i++)
         {
-            var l = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            var l = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
             _output.WriteLine($"MI line: {l}");
             if (l != null && l.StartsWith("*stopped"))
             {
@@ -44,7 +44,7 @@ public class MiMode_EvaluateTests
 
         // Query stack frames and find frame id
         await writer.WriteLineAsync("3-stack-list-frames");
-        var framesResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var framesResp = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"FramesResp: {framesResp}");
         Assert.Contains("^done", framesResp);
         var idMatch = System.Text.RegularExpressions.Regex.Match(framesResp ?? string.Empty, "id=\\\"(\\d+)\\\"");
@@ -53,7 +53,7 @@ public class MiMode_EvaluateTests
 
         // Evaluate some expressions in that frame
         await writer.WriteLineAsync($"4-data-evaluate-expression --expression=\"1+2\" --frame={frameIdStr}");
-        var evalResp = await reader.ReadLineAsync().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var evalResp = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"EvalResp: {evalResp}");
         Assert.Contains("^done", evalResp);
 

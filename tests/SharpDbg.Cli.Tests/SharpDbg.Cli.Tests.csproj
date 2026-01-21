@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-	<UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+	  <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <!--
     This template uses native xUnit.net command line options when using 'dotnet run' and
     VSTest by default when using 'dotnet test'. For more information on how to enable support
@@ -45,6 +45,12 @@
     <ProjectReference Include="..\..\src\SharpDbg.Cli\SharpDbg.Cli.csproj" />
 	  <!-- ensure the project we are debugging is up to date -->
     <ProjectReference Include="..\DebuggableConsoleApp\DebuggableConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <!-- MI integration test apps -->
+    <ProjectReference Include="..\..\test\mi-integration\TestApp\MiIntegrationTestApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\test\mi-integration\TestApp1\MiIntegrationTestApp1.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\test\mi-integration\TestApp2\MiIntegrationTestApp2.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\test\mi-integration\TestAppExpression\MiIntegrationTestAppExpression.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\test\mi-integration\TestAppStepping\MiIntegrationTestAppStepping.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
