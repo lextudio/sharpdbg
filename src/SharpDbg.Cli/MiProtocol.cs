@@ -1,4 +1,6 @@
 using System.Text;
+using System.IO;
+using System.Diagnostics;
 using SharpDbg.Application;
 using SharpDbg.Infrastructure.Debugger;
 
@@ -160,8 +162,14 @@ internal static class MiProtocol
                 {
                     // support: data-evaluate-expression --expression="..." [--frame=N]
                     var argsMap = ParseArgs(cmd);
-                    string expr;
-                    if (!argsMap.TryGetValue("expression", out expr))
+                    string expr = string.Empty;
+                    // Prefer a quoted --expression value (handles spaces inside quotes)
+                    var exprMatch = System.Text.RegularExpressions.Regex.Match(cmd, "--expression\\s*=\\s*\"([^\"]*)\"");
+                    if (exprMatch.Success)
+                    {
+                        expr = exprMatch.Groups[1].Value;
+                    }
+                    else if (!argsMap.TryGetValue("expression", out expr))
                     {
                         var parts = cmd.Split(' ', 2);
                         expr = parts.Length > 1 ? parts[1].Trim() : string.Empty;
@@ -219,6 +227,8 @@ internal static class MiProtocol
                     else if (_lastStoppedThreadId != 0) threadId = _lastStoppedThreadId;
 
                     var frames = debugger.GetStackTrace(threadId, 0, 20);
+                    // Reverse frames so MI 'level=0' corresponds to the first logical frame expected by callers
+                    try { frames.Reverse(); } catch { }
                     var stackItems = new List<string>();
                     for (int i = 0; i < frames.Count; i++)
                     {

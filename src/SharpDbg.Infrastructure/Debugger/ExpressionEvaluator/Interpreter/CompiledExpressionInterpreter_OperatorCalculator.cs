@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using ClrDebug;
 
 namespace SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Interpreter;
@@ -32,14 +34,14 @@ public partial class CompiledExpressionInterpreter
 		var value2 = await GetFrontStackEntryValue(evalStack);
 		evalStack.RemoveFirst();
 
-		var realValue2 = await GetRealValueWithType(value2!);
+			var realValue2 = await GetRealValueWithType(value2!);
 		var elemType2 = realValue2.Type;
 
 		var value1 = await GetFrontStackEntryValue(evalStack);
 		// reset the first entry to hold the result
 		evalStack.First!.ValueRef = new EvalStackEntry();
 
-		var realValue1 = await GetRealValueWithType(value1!);
+			var realValue1 = await GetRealValueWithType(value1!);
 		var elemType1 = realValue1.Type;
 
 		if (elemType1 == CorElementType.ValueType || elemType2 == CorElementType.ValueType ||
@@ -108,14 +110,66 @@ public partial class CompiledExpressionInterpreter
 		CorDebugValue value2,
 		LinkedList<EvalStackEntry> evalStack)
 	{
+		// Special-case: string concatenation — handle before attempting to read primitive bytes
+		try
+		{
+			var un1 = value1.UnwrapDebugValue();
+			var un2 = value2.UnwrapDebugValue();
+			if ((un1.Type == CorElementType.String || un2.Type == CorElementType.String) && opType == OperationType.AddExpression)
+			{
+				var s1 = (await _debugger.GetValueForCorDebugValueAsync(value1, _context.ThreadId, _context.StackDepth)).value ?? string.Empty;
+				var s2 = (await _debugger.GetValueForCorDebugValueAsync(value2, _context.ThreadId, _context.StackDepth)).value ?? string.Empty;
+				var concat = s1 + s2;
+				var resultVal = await CreateString(concat);
+				evalStack.First.Value.CorDebugValue = resultVal;
+				return resultVal;
+			}
+		}
+		catch { }
+
 		var (data1, type1) = await GetOperandDataTypeByValue(value1);
 		var (data2, type2) = await GetOperandDataTypeByValue(value2);
 
-		var resultData = CalculatePrimitive(type1, type2, opType, data1, data2);
-		var result = await CreateValueFromPrimitiveData(resultData);
+			string ToFriendly(CorElementType t, byte[] d)
+			{
+				return t switch
+				{
+					CorElementType.R8 => BitConverter.ToDouble(d, 0).ToString(),
+					CorElementType.R4 => BitConverter.ToSingle(d, 0).ToString(),
+					CorElementType.I4 => BitConverter.ToInt32(d, 0).ToString(),
+					CorElementType.U4 => BitConverter.ToUInt32(d, 0).ToString(),
+					CorElementType.I8 => BitConverter.ToInt64(d, 0).ToString(),
+					CorElementType.U8 => BitConverter.ToUInt64(d, 0).ToString(),
+					CorElementType.I2 => BitConverter.ToInt16(d, 0).ToString(),
+					CorElementType.U2 => BitConverter.ToUInt16(d, 0).ToString(),
+					CorElementType.I1 => ((sbyte)d[0]).ToString(),
+					CorElementType.U1 => d[0].ToString(),
+					CorElementType.Char => BitConverter.ToChar(d, 0).ToString(),
+					_ => BitConverter.ToString(d)
+				};
+			}
 
-		evalStack.First.Value.CorDebugValue = result;
-		return result;
+			var resultData = CalculatePrimitive(type1, type2, opType, data1, data2);
+
+			// For comparison and logical operations, return a boolean CorDebugValue
+			if (opType == OperationType.EqualsExpression || opType == OperationType.NotEqualsExpression ||
+				opType == OperationType.LessThanExpression || opType == OperationType.GreaterThanExpression ||
+				opType == OperationType.LessThanOrEqualExpression || opType == OperationType.GreaterThanOrEqualExpression ||
+				opType == OperationType.LogicalAndExpression || opType == OperationType.LogicalOrExpression)
+			{
+				// interpret resultData as little-endian integer
+				long v = 0;
+				for (int i = 0; i < Math.Min(resultData.Length, 8); i++)
+					v |= ((long)resultData[i] & 0xffL) << (8 * i);
+				var boolResult = v != 0;
+				var boolValue = await CreateBooleanValue(boolResult);
+				evalStack.First.Value.CorDebugValue = boolValue;
+				return boolValue;
+			}
+
+			var result = await CreateValueFromPrimitiveData(resultData);
+			evalStack.First.Value.CorDebugValue = result;
+			return result;
 	}
 
 	private async Task<CorDebugValue> CalculatePrimitiveOperand(
@@ -126,6 +180,16 @@ public partial class CompiledExpressionInterpreter
 		var (data, type) = await GetOperandDataTypeByValue(value);
 
 		var resultData = CalculatePrimitiveUnary(type, opType, data);
+		if (opType == OperationType.LogicalNotExpression)
+		{
+			long v = 0;
+			for (int i = 0; i < Math.Min(resultData.Length, 8); i++)
+				v |= ((long)resultData[i] & 0xffL) << (8 * i);
+			var boolValue = await CreateBooleanValue(v != 0);
+			evalStack.First.Value.CorDebugValue = boolValue;
+			return boolValue;
+		}
+
 		var result = await CreateValueFromPrimitiveData(resultData);
 
 		evalStack.First.Value.CorDebugValue = result;
@@ -142,12 +206,26 @@ public partial class CompiledExpressionInterpreter
 			return null;
 
 		var corDebugFunction = await FindOperatorMethod(objectValue, opName, 2);
-		if (corDebugFunction == null) return null;
+			if (corDebugFunction == null) return null;
 
-		var eval = _context.Thread.CreateEval();
-		ICorDebugValue[] evalArgs = [arg1.Raw, arg2.Raw];
-		return await eval.CallParameterizedFunctionAsync(_debuggerManagedCallback, corDebugFunction, 0, null, evalArgs.Length, evalArgs);
-	}
+			var eval = _context.Thread.CreateEval();
+			try
+			{
+				ICorDebugValue[] evalArgs = new ICorDebugValue[] { arg1.Raw, arg2.Raw };
+				var result = await eval.CallParameterizedFunctionAsync(_debuggerManagedCallback, corDebugFunction, 0, null, evalArgs.Length, evalArgs);
+				if (result != null)
+				{
+					var friendly = await _debugger.GetValueForCorDebugValueAsync(result, _context.ThreadId, _context.StackDepth);
+					var (resBytes, resType) = await GetOperandDataTypeByValue(result);
+				}
+
+				return result;
+			}
+			catch (Exception ex)
+			{
+				throw;
+			}
+		}
 
 	private async Task<CorDebugValue?> CallUnaryOperator(
 		string opName,
@@ -161,7 +239,7 @@ public partial class CompiledExpressionInterpreter
 			return null;
 
 		var eval = _context.Thread.CreateEval();
-		ICorDebugValue[] evalArgs = [baseValue.Raw];
+		ICorDebugValue[] evalArgs = new ICorDebugValue[] { baseValue.Raw };
 		return await eval.CallParameterizedFunctionAsync(_debuggerManagedCallback, corDebugFunction, 0, null, evalArgs.Length, evalArgs);
 	}
 
@@ -281,6 +359,56 @@ public partial class CompiledExpressionInterpreter
 			return BitConverter.GetBytes(result32);
 		}
 
+		// Handle smaller integer types and boolean/char (sizes 1 or 2)
+		if (type1 == CorElementType.I2 || type2 == CorElementType.I2 ||
+			type1 == CorElementType.U2 || type2 == CorElementType.U2 ||
+			type1 == CorElementType.I1 || type2 == CorElementType.I1 ||
+			type1 == CorElementType.U1 || type2 == CorElementType.U1 ||
+			type1 == CorElementType.Boolean || type2 == CorElementType.Boolean ||
+			type1 == CorElementType.Char || type2 == CorElementType.Char)
+		{
+			long GetAsLong(CorElementType t, byte[] d)
+			{
+				return t switch
+				{
+					CorElementType.I1 => (sbyte)d[0],
+					CorElementType.U1 => d[0],
+					CorElementType.Boolean => d[0] != 0 ? 1 : 0,
+					CorElementType.I2 => BitConverter.ToInt16(d, 0),
+					CorElementType.U2 => BitConverter.ToUInt16(d, 0),
+					CorElementType.Char => BitConverter.ToChar(d, 0),
+					_ => BitConverter.ToInt64(d, 0)
+				};
+
+			}
+
+			var s1 = GetAsLong(type1, data1);
+			var s2 = GetAsLong(type2, data2);
+			var resultSmall = opType switch
+			{
+					OperationType.AddExpression => s1 + s2,
+					OperationType.SubtractExpression => s1 - s2,
+					OperationType.MultiplyExpression => s1 * s2,
+					OperationType.DivideExpression => s1 / s2,
+					OperationType.ModuloExpression => s1 % s2,
+					OperationType.LeftShiftExpression => s1 << (int)s2,
+					OperationType.RightShiftExpression => s1 >> (int)s2,
+					OperationType.BitwiseAndExpression => s1 & s2,
+					OperationType.BitwiseOrExpression => s1 | s2,
+					OperationType.ExclusiveOrExpression => s1 ^ s2,
+					OperationType.EqualsExpression => s1 == s2 ? 1 : 0,
+					OperationType.NotEqualsExpression => s1 != s2 ? 1 : 0,
+					OperationType.LogicalAndExpression => (s1 != 0 && s2 != 0) ? 1 : 0,
+					OperationType.LogicalOrExpression => (s1 != 0 || s2 != 0) ? 1 : 0,
+					OperationType.LessThanExpression => s1 < s2 ? 1 : 0,
+					OperationType.GreaterThanExpression => s1 > s2 ? 1 : 0,
+					OperationType.LessThanOrEqualExpression => s1 <= s2 ? 1 : 0,
+					OperationType.GreaterThanOrEqualExpression => s1 >= s2 ? 1 : 0,
+				_ => throw new ArgumentException($"Unsupported operation: {opType}")
+			};
+			return BitConverter.GetBytes(resultSmall);
+		}
+
 		var l1 = BitConverter.ToInt64(data1, 0);
 		var l2 = BitConverter.ToInt64(data2, 0);
 		var result64 = opType switch
@@ -297,6 +425,8 @@ public partial class CompiledExpressionInterpreter
 			OperationType.ExclusiveOrExpression => l1 ^ l2,
 			OperationType.EqualsExpression => l1 == l2 ? 1 : 0,
 			OperationType.NotEqualsExpression => l1 != l2 ? 1 : 0,
+			OperationType.LogicalAndExpression => (l1 != 0 && l2 != 0) ? 1 : 0,
+			OperationType.LogicalOrExpression => (l1 != 0 || l2 != 0) ? 1 : 0,
 			OperationType.LessThanExpression => l1 < l2 ? 1 : 0,
 			OperationType.GreaterThanExpression => l1 > l2 ? 1 : 0,
 			OperationType.LessThanOrEqualExpression => l1 <= l2 ? 1 : 0,
@@ -335,6 +465,37 @@ public partial class CompiledExpressionInterpreter
 				_ => throw new ArgumentException($"Unsupported operation: {opType}")
 			};
 			return BitConverter.GetBytes(result);
+		}
+
+		// Handle smaller integer types and boolean/char for unary operations
+		if (type == CorElementType.I2 || type == CorElementType.U2 ||
+			type == CorElementType.I1 || type == CorElementType.U1 ||
+			type == CorElementType.Boolean || type == CorElementType.Char)
+		{
+			long GetAsLong(CorElementType t, byte[] d)
+			{
+				return t switch
+				{
+					CorElementType.I1 => (sbyte)d[0],
+					CorElementType.U1 => d[0],
+					CorElementType.Boolean => d[0] != 0 ? 1 : 0,
+					CorElementType.I2 => BitConverter.ToInt16(d, 0),
+					CorElementType.U2 => BitConverter.ToUInt16(d, 0),
+					CorElementType.Char => BitConverter.ToChar(d, 0),
+					_ => BitConverter.ToInt64(d, 0)
+				};
+			}
+
+			var lsmall = GetAsLong(type, data);
+			var resultSmall = opType switch
+			{
+				OperationType.UnaryPlusExpression => +lsmall,
+				OperationType.UnaryMinusExpression => -lsmall,
+				OperationType.BitwiseNotExpression => ~lsmall,
+				OperationType.LogicalNotExpression => (lsmall == 0) ? 1 : 0,
+				_ => throw new ArgumentException($"Unsupported operation: {opType}")
+			};
+			return BitConverter.GetBytes(resultSmall);
 		}
 
 		var l = BitConverter.ToInt64(data, 0);

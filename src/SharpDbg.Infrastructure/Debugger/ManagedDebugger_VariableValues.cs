@@ -4,6 +4,9 @@ using System.Runtime.InteropServices;
 using ClrDebug;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Compiler;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 
 namespace SharpDbg.Infrastructure.Debugger;
 
@@ -12,6 +15,19 @@ public partial class ManagedDebugger
 {
 	public async Task<(string friendlyTypeName, string value, CorDebugValue? debuggerProxyInstance, bool resultIsError)> GetValueForCorDebugValueAsync(CorDebugValue corDebugValue, ThreadId threadId, FrameStackDepth frameStackDepth)
 	{
+		var unwrappedValue = corDebugValue.UnwrapDebugValue();
+		if (unwrappedValue is CorDebugObjectValue objectValue)
+		{
+			var typeName = GetCorDebugTypeFriendlyName(objectValue.ExactType);
+			if (typeName is "System.Decimal" or "decimal")
+			{
+				var decimalString = await TryGetDecimalStringViaEval(objectValue, threadId);
+				if (decimalString is not null)
+				{
+					return (typeName, decimalString, null, false);
+				}
+			}
+		}
 		var (friendlyTypeName, value, valueRequiresDebuggerDisplayEval, debuggerProxyTypeName) = GetValueForCorDebugValue(corDebugValue);
 		if (valueRequiresDebuggerDisplayEval)
 		{
@@ -47,6 +63,27 @@ public partial class ManagedDebugger
 			ArgumentNullException.ThrowIfNull(proxyInstance);
 		}
 		return (friendlyTypeName, value, proxyInstance, false);
+	}
+
+	private async Task<string?> TryGetDecimalStringViaEval(CorDebugObjectValue objectValue, ThreadId threadId)
+	{
+		try
+		{
+			var function = await ExpressionEvaluator.Interpreter.CompiledExpressionInterpreter.FindMethodOnType(objectValue.ExactType, "ToString", [], false, true);
+			if (function is null) return null;
+			var thread = _process!.GetThread(threadId.Value);
+			var eval = thread.CreateEval();
+			var result = await eval.CallParameterlessInstanceMethodAsync(_callbacks, function, objectValue);
+			var unwrapped = result?.UnwrapDebugValue();
+			if (unwrapped is CorDebugStringValue stringValue)
+			{
+				return stringValue.GetStringWithoutBug(stringValue.Length + 1);
+			}
+		}
+		catch
+		{
+		}
+		return null;
 	}
 
 	private static CorDebugValueValueResult GetValueForCorDebugValue(CorDebugValue corDebugValue)
@@ -93,6 +130,7 @@ public partial class ManagedDebugger
 	{
 		var module = corDebugObjectValue.Class.Module;
 		var metaDataImport = module.GetMetaDataInterface().MetaDataImport;
+		var typeName = GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType);
 		var baseTypeName = GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType.Base);
 		if (baseTypeName == "System.Enum")
 		{
@@ -103,7 +141,13 @@ public partial class ManagedDebugger
 			var enumDisplayValue = GetEnumDisplayValue(metaDataImport, corDebugObjectValue, value.Value);
 			return new(GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType), enumDisplayValue, false, null);
 		}
-		var typeName = GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType);
+		if (typeName is "System.Decimal" or "decimal")
+		{
+			if (TryGetDecimalValue(corDebugObjectValue, metaDataImport, out var decimalString))
+			{
+				return new(typeName, decimalString, false, null);
+			}
+		}
 		if (typeName.EndsWith('?'))
 		{
 			var underlyingValueOrNull = GetUnderlyingValueOrNullFromNullableStruct(corDebugObjectValue);
@@ -124,6 +168,133 @@ public partial class ManagedDebugger
 		}
 
 		return new(typeName, $"{{{typeName}}}", false, debugProxyTypeName);
+	}
+
+	private static bool TryGetDecimalValue(CorDebugObjectValue corDebugObjectValue, MetaDataImport metaDataImport, out string decimalString)
+	{
+		decimalString = string.Empty;
+		if (TryGetDecimalValueFromFields(corDebugObjectValue, metaDataImport, out var value) ||
+			TryGetDecimalValueFromBytes(corDebugObjectValue, out value))
+		{
+			decimalString = value.ToString(CultureInfo.InvariantCulture);
+			return true;
+		}
+
+		return false;
+	}
+
+	private static bool TryGetDecimalValueFromFields(CorDebugObjectValue corDebugObjectValue, MetaDataImport metaDataImport, out decimal value)
+	{
+		value = default;
+		try
+		{
+			var classToken = corDebugObjectValue.Class.Token;
+			var fields = metaDataImport.EnumFields(classToken);
+			int? loFieldDef = null;
+			int? midFieldDef = null;
+			int? hiFieldDef = null;
+			int? flagsFieldDef = null;
+
+			foreach (var field in fields)
+			{
+				var fieldProps = metaDataImport.GetFieldProps(field);
+				var name = fieldProps.szField.TrimStart('_');
+				switch (name)
+				{
+					case "lo":
+						loFieldDef = field;
+						break;
+					case "mid":
+						midFieldDef = field;
+						break;
+					case "hi":
+						hiFieldDef = field;
+						break;
+					case "flags":
+						flagsFieldDef = field;
+						break;
+				}
+			}
+
+			if (loFieldDef is null || midFieldDef is null || hiFieldDef is null || flagsFieldDef is null)
+				return false;
+
+			var lo = ReadDecimalField(corDebugObjectValue, loFieldDef.Value);
+			var mid = ReadDecimalField(corDebugObjectValue, midFieldDef.Value);
+			var hi = ReadDecimalField(corDebugObjectValue, hiFieldDef.Value);
+			var flags = ReadDecimalField(corDebugObjectValue, flagsFieldDef.Value);
+
+			return TryBuildDecimal(lo, mid, hi, flags, out value);
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool TryGetDecimalValueFromBytes(CorDebugObjectValue corDebugObjectValue, out decimal value)
+	{
+		value = default;
+		try
+		{
+			var generic = corDebugObjectValue.As<CorDebugGenericValue>();
+			var bytes = generic.GetValueAsBytes();
+			if (bytes.Length < 16)
+				return false;
+
+			var p0 = BitConverter.ToInt32(bytes, 0);
+			var p1 = BitConverter.ToInt32(bytes, 4);
+			var p2 = BitConverter.ToInt32(bytes, 8);
+			var p3 = BitConverter.ToInt32(bytes, 12);
+
+			// Most common layout: lo, mid, hi, flags (Decimal.GetBits order)
+			if (TryBuildDecimal(p0, p1, p2, p3, out value))
+				return true;
+
+			// Alternative layout: flags, hi, lo, mid (struct field order)
+			if (TryBuildDecimal(p2, p3, p1, p0, out value))
+				return true;
+		}
+		catch
+		{
+			return false;
+		}
+
+		return false;
+	}
+
+	private static bool TryBuildDecimal(int lo, int mid, int hi, int flags, out decimal value)
+	{
+		value = default;
+		if (!IsValidDecimalFlags(flags))
+			return false;
+		try
+		{
+			var isNegative = (flags & unchecked((int)0x80000000)) != 0;
+			var scale = (byte)((flags >> 16) & 0xFF);
+			value = new decimal(lo, mid, hi, isNegative, scale);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool IsValidDecimalFlags(int flags)
+	{
+		const int allowedMask = unchecked((int)0x80FF0000);
+		if ((flags & ~allowedMask) != 0)
+			return false;
+		var scale = (flags >> 16) & 0xFF;
+		return scale <= 28;
+	}
+
+	private static int ReadDecimalField(CorDebugObjectValue corDebugObjectValue, int fieldToken)
+	{
+		var fieldValue = corDebugObjectValue.GetFieldValue(corDebugObjectValue.Class.Raw, fieldToken);
+		var value = GetValueForCorDebugValue(fieldValue).Value;
+		return int.Parse(value, CultureInfo.InvariantCulture);
 	}
 
 	private static CorDebugValue? GetUnderlyingValueOrNullFromNullableStruct(CorDebugObjectValue corDebugObjectValue)

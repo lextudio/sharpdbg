@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.IO;
 using ClrDebug;
 
 namespace SharpDbg.Infrastructure.Debugger;

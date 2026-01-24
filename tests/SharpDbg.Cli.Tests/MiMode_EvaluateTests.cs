@@ -21,13 +21,13 @@ public class MiMode_EvaluateTests
         var ready = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"MI ready: {ready}");
 
-        var bpPath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestApp", "Program.cs" });
-        await writer.WriteLineAsync($"1-break-insert {bpPath}:12");
+        var bpPath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestAppExpression", "Program.cs" });
+        await writer.WriteLineAsync($"1-break-insert {bpPath}:29");
         var bpResp = await reader.ReadLineAsync(TestContext.Current.CancellationToken).AsTask().WaitAsync(System.TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         _output.WriteLine($"BreakResp: {bpResp}");
         Assert.Contains("^done", bpResp);
 
-        var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestApp", "debug", "MiIntegrationTestApp" });
+        var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestAppExpression", "debug", "MiIntegrationTestAppExpression" });
         await writer.WriteLineAsync($"2-exec-run --program=\"{appPath}\"");
 
         string? stoppedLine = null;

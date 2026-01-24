@@ -27,13 +27,14 @@ This document describes which MI-based netcoredbg tests we have migrated into `t
 
 ### MiMode_EvaluateTests
 - SharpDbg test: `tests/SharpDbg.Cli.Tests/MiMode_EvaluateTests.cs`
-- Purpose: stop the debuggee, obtain a frame id, and exercise `data-evaluate-expression` (using a simple literal) to ensure MI evaluation wiring is functional.
+- Test app: `test/mi-integration/TestAppExpression/Program.cs` (shares the same expression fixture used for `MITestExpression`, with decimals/arrays/strings).
+- Purpose: stop the debuggee, obtain a frame id, and exercise `data-evaluate-expression` across representative values (decimals, arrays, arithmetic, and strings) to ensure MI evaluation wiring is functional.
 - Original source: `netcoredbg/test-suite/MITestEvaluate/Program.cs`
 - Key anchors:
   - `Label.Checkpoint("init", "values_test", …)` — line 716
   - `Label.Checkpoint("values_test", "expression_test", …)` — line 753
   - extensive coverage of expression variants (nested tests, static members, lambdas, literals, conditionals, unary ops, function evaluation and coalescence) — lines 828‑1472
-- Status: Partial. The SharpDbg test confirms the basic evaluate command but does not yet port the wide range of expression checks present in the original script.
+- Status: Partial. The SharpDbg test now asserts decimal formatting, array indexing, arithmetic, and string concatenation. Large portions of the original evaluate suite (operator overloads, comparisons, unary ops, and broader error cases) still remain.
 
 ### MiMode_EvaluateExpressionTests
 - SharpDbg test: `tests/SharpDbg.Cli.Tests/MiMode_EvaluateExpressionTests.cs`
@@ -46,7 +47,7 @@ This document describes which MI-based netcoredbg tests we have migrated into `t
   - `Label.Checkpoint("expression_test2", "expression_test3", …)` — line 210
   - `Context.CalcAndCheckExpression(...)` blocks that evaluate `a + b`, `tc.a + b`, `str1 + str2`, `d + a`, and `a + 1` — lines 200‑251
   - `Label.Checkpoint("finish", "", …)` — line 225
-- Status: Mostly ported. The SharpDbg test now hits the same expression breakpoints and validates `a + b`, `tc.a + b`, `str1 + str2`, `d + a`, `a + 1`, plus array indexing, nullable coalescing, bool logic, and static helper results (e.g., `Program.Greeting`, `Program.Multiply`). Extended expression families (lambdas, conditional/unary operators, struct child navigation, etc.) still need formal porting.
+- Status: Mostly ported. The SharpDbg test now hits the same expression breakpoints and validates `a + b`, `tc.a + b`, `str1 + str2`, `d + a`, `a + 1`, plus decimal values, array indexing, nullable coalescing, bool logic, and static helper results (e.g., `Program.Greeting`, `Program.Multiply`). Extended expression families (lambdas, conditional/unary operators, struct child navigation, etc.) still need formal porting.
 
 ### MiMode_VariablesTests
 - SharpDbg test: `tests/SharpDbg.Cli.Tests/MiMode_VariablesTests.cs`

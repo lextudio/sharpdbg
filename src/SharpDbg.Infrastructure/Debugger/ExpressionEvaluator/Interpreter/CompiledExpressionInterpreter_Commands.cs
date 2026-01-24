@@ -143,11 +143,19 @@ public partial class CompiledExpressionInterpreter
 		if (objType == null && objValue == null) throw new InvalidOperationException("Could not resolve target type for method invocation");
 
 		CorDebugFunction? function = null;
-		bool? searchStatic = objType is null;
+		bool? searchStatic = objValue == null;
+		if (objType != null && IsStaticClass(objType))
+		{
+			searchStatic = true;
+		}
 
 		if (objType != null)
 		{
 			function = await FindMethodOnType(objType, methodName, args, searchStatic.Value, idsEmpty);
+			if (function == null && searchStatic.Value == false && objValue != null)
+			{
+				function = await FindMethodOnType(objType, methodName, args, true, idsEmpty);
+			}
 		}
 
 		if (function == null)
@@ -157,6 +165,28 @@ public partial class CompiledExpressionInterpreter
 
 		var methodProps2 = function.Class.Module.GetMetaDataInterface().MetaDataImport!.GetMethodProps(function.Token);
 		isInstance = methodProps2.pdwAttr.IsMdStatic() is false;
+
+		var parameterTypes = ParseMethodSignatureWithMetadata(methodProps2.ppvSigBlob, methodProps2.pcbSigBlob);
+		if (parameterTypes.Count == args.Length)
+		{
+			for (var i = 0; i < args.Length; i++)
+			{
+				if (args[i] == null)
+					continue;
+				var expectedType = SignatureTypeCodeToCorElementType(parameterTypes[i].TypeCode);
+				if (expectedType == CorElementType.End)
+					continue;
+				var argType = GetArgElementType(args[i]!);
+				if (expectedType != argType)
+				{
+					var converted = await TryConvertNumericValue(args[i]!, argType, expectedType);
+					if (converted != null)
+					{
+						args[i] = converted;
+					}
+				}
+			}
+		}
 
 		var typeArgsCount = entry.GenericTypeCache?.Count ?? 0;
 		var realArgsCount = args.Length + (isInstance ? 1 : 0);
@@ -225,6 +255,8 @@ public partial class CompiledExpressionInterpreter
 		var module = typeClass.Module;
 		var metaDataImport = module.GetMetaDataInterface().MetaDataImport;
 		var classToken = typeClass.Token;
+		CorDebugFunction? bestMethod = null;
+		var bestScore = int.MaxValue;
 
 		var methods = metaDataImport!.EnumMethods(classToken);
 		foreach (var methodToken in methods)
@@ -242,17 +274,32 @@ public partial class CompiledExpressionInterpreter
 			var method = module.GetFunctionFromToken(methodToken);
 
 			if (IsMethodParameterMatch(method, args))
-				return method;
-
-			var baseType = type.Base;
-			while (baseType != null)
 			{
-				var baseMethod = await FindMethodOnType(baseType, methodName, args, searchStatic, idsEmpty);
-				if (baseMethod != null)
-					return baseMethod;
-
-				baseType = baseType.Base;
+				return method;
 			}
+
+			var score = GetMethodParameterMatchScore(method, args);
+			if (score >= 0)
+			{
+				if (bestMethod == null || score < bestScore)
+				{
+					bestMethod = method;
+					bestScore = score;
+				}
+			}
+		}
+
+		if (bestMethod != null)
+			return bestMethod;
+
+		var baseType = type.Base;
+		while (baseType != null)
+		{
+			var baseMethod = await FindMethodOnType(baseType, methodName, args, searchStatic, idsEmpty);
+			if (baseMethod != null)
+				return baseMethod;
+
+			baseType = baseType.Base;
 		}
 
 		return null;
@@ -278,7 +325,7 @@ public partial class CompiledExpressionInterpreter
 			if (args[i] == null)
 				continue;
 
-			var argType = args[i].ExactType?. Type ??  args[i].Type; // Get the actual type
+			var argType = GetArgElementType(args[i]);
 
 			if (!IsTypeMatch(parameterTypes[i], argType, args[i]))
 				return false;
@@ -309,11 +356,54 @@ public partial class CompiledExpressionInterpreter
 
 		if (elemType == CorElementType.SZArray || elemType == CorElementType.Array)
 		{
-			throw new NotImplementedException("Array element access not yet fully implemented");
+			try
+			{
+				CorDebugArrayValue? arrayValue = null;
+				if (realValue is CorDebugArrayValue av) arrayValue = av;
+				else if (realValue is CorDebugReferenceValue rv && !rv.IsNull)
+				{
+					var deref = rv.Dereference();
+					if (deref is CorDebugArrayValue av2) arrayValue = av2;
+				}
+
+				if (arrayValue == null)
+				{
+					throw new InvalidOperationException("Failed to resolve array for element access");
+				}
+
+				var rank = arrayValue.Rank;
+				if (rank > 1) throw new NotImplementedException("Multidimensional array indexing not yet supported");
+
+				// Get element (GetElement expects 1-based first parameter)
+				var idxs = new int[indexes.Count];
+				for (int i = 0; i < indexes.Count; i++) idxs[i] = (int)indexes[i];
+				var element = arrayValue.GetElement(1, idxs);
+				evalStack.First.Value.CorDebugValue = element;
+				return;
+			}
+			catch (Exception ex)
+			{
+				throw;
+			}
 		}
 		else
 		{
 			throw new NotImplementedException("Indexer access not yet fully implemented");
+		}
+	}
+
+	private static bool IsStaticClass(CorDebugType type)
+	{
+		try
+		{
+			var metaDataImport = type.Class.Module.GetMetaDataInterface().MetaDataImport;
+			var typeDefProps = metaDataImport.GetTypeDefProps(type.Class.Token);
+			var flags = typeDefProps.pdwTypeDefFlags;
+			return (flags & CorTypeAttr.tdAbstract) != 0 && (flags & CorTypeAttr.tdSealed) != 0;
+		}
+		catch
+		{
+			return false;
 		}
 	}
 
@@ -591,9 +681,122 @@ public partial class CompiledExpressionInterpreter
 				evalStack.AddFirst(rightEntry);
 			}
 		}
+		else if (TryGetNullableValue(realLeft, out var hasValue, out var underlyingValue))
+		{
+			if (!hasValue)
+			{
+				evalStack.RemoveFirst();
+				evalStack.AddFirst(rightEntry);
+			}
+			else if (underlyingValue != null)
+			{
+				leftEntry.CorDebugValue = underlyingValue;
+				leftEntry.Identifiers.Clear();
+				leftEntry.PreventBinding = true;
+			}
+		}
 		else
 		{
 			throw new ArgumentException("Operator ?? cannot be applied to operands of these types");
 		}
+	}
+
+	private static bool TryGetNullableValue(CorDebugValue value, out bool hasValue, out CorDebugValue? underlyingValue)
+	{
+		hasValue = false;
+		underlyingValue = null;
+		try
+		{
+			if (value is not CorDebugObjectValue objectValue)
+				return false;
+
+			var metaDataImport = objectValue.Class.Module.GetMetaDataInterface().MetaDataImport;
+			var typeProps = metaDataImport.GetTypeDefProps(objectValue.Class.Token);
+			if (!typeProps.szTypeDef.StartsWith("System.Nullable`", StringComparison.Ordinal))
+				return false;
+
+			var hasValueFieldDef = metaDataImport.FindField(objectValue.Class.Token, "hasValue", 0, 0);
+			var valueFieldDef = metaDataImport.FindField(objectValue.Class.Token, "value", 0, 0);
+
+			var hasValueDebugValue = objectValue.GetFieldValue(objectValue.Class.Raw, hasValueFieldDef);
+			if (!TryReadBoolean(hasValueDebugValue, out hasValue))
+				return false;
+			if (!hasValue)
+				return true;
+
+			underlyingValue = objectValue.GetFieldValue(objectValue.Class.Raw, valueFieldDef);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool TryReadBoolean(CorDebugValue value, out bool result)
+	{
+		result = false;
+		var unwrapped = value.UnwrapDebugValue();
+		if (unwrapped is CorDebugGenericValue genValue && genValue.Type == CorElementType.Boolean)
+		{
+			var data = genValue.GetValueAsBytes();
+			result = data.Length > 0 && data[0] != 0;
+			return true;
+		}
+		return false;
+	}
+
+	private async Task<CorDebugValue?> TryConvertNumericValue(CorDebugValue value, CorElementType fromType, CorElementType toType)
+	{
+		if (!IsNumericType(fromType) || !IsNumericType(toType))
+			return null;
+
+		var unwrapped = value.UnwrapDebugValue();
+		if (unwrapped is not CorDebugGenericValue genValue)
+			return null;
+
+		var data = genValue.GetValueAsBytes();
+		double numericValue;
+		try
+		{
+			numericValue = fromType switch
+			{
+				CorElementType.I1 => unchecked((sbyte)data[0]),
+				CorElementType.U1 => data[0],
+				CorElementType.I2 => BitConverter.ToInt16(data, 0),
+				CorElementType.U2 => BitConverter.ToUInt16(data, 0),
+				CorElementType.I4 => BitConverter.ToInt32(data, 0),
+				CorElementType.U4 => BitConverter.ToUInt32(data, 0),
+				CorElementType.I8 => BitConverter.ToInt64(data, 0),
+				CorElementType.U8 => BitConverter.ToUInt64(data, 0),
+				CorElementType.R4 => BitConverter.ToSingle(data, 0),
+				CorElementType.R8 => BitConverter.ToDouble(data, 0),
+				_ => throw new ArgumentOutOfRangeException(nameof(fromType))
+			};
+		}
+		catch
+		{
+			return null;
+		}
+
+		byte[]? outData = toType switch
+		{
+			CorElementType.I4 => BitConverter.GetBytes((int)numericValue),
+			CorElementType.U4 => BitConverter.GetBytes((uint)numericValue),
+			CorElementType.I8 => BitConverter.GetBytes((long)numericValue),
+			CorElementType.U8 => BitConverter.GetBytes((ulong)numericValue),
+			CorElementType.R4 => BitConverter.GetBytes((float)numericValue),
+			CorElementType.R8 => BitConverter.GetBytes(numericValue),
+			CorElementType.I2 => BitConverter.GetBytes((short)numericValue),
+			CorElementType.U2 => BitConverter.GetBytes((ushort)numericValue),
+			CorElementType.I1 => new[] { (byte)(sbyte)numericValue },
+			CorElementType.U1 => new[] { (byte)numericValue },
+			_ => null
+		};
+
+		if (outData == null)
+			return null;
+
+		return await CreatePrimitiveValue(toType, outData);
 	}
 }

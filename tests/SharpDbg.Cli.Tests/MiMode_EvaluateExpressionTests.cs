@@ -26,16 +26,17 @@ public class MiModeEvaluateExpressionTests
         _output.WriteLine($"MI ready: {ready}");
 
         var sourcePath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestAppExpression", "Program.cs" });
-        var breakLine1 = 25;
-        var breakLine2 = 28;
-        var breakLine3 = 53;
+        var breakLine1 = 29;
+        var breakLine2 = 32;
+        var breakLine3 = 34;
         var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestAppExpression", "debug", "MiIntegrationTestAppExpression" });
 
         var commandId = 1;
-        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine1}");
-        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine2}");
-        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine3}");
-        await SendCommandAsync(writer, reader, $"{commandId++}-exec-run --program=\"{appPath}\"");
+        var pendingStops = new Queue<string>();
+        await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-break-insert {sourcePath}:{breakLine1}");
+        await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-break-insert {sourcePath}:{breakLine2}");
+        await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-break-insert {sourcePath}:{breakLine3}");
+        await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-exec-run --program=\"{appPath}\"");
 
         var expressionStages = new[]
         {
@@ -72,71 +73,74 @@ public class MiModeEvaluateExpressionTests
 
         for (int i = 0; i < expressionStages.Length; i++)
         {
-            Assert.True(await WaitForStoppedNotificationAsync(reader, 30) != null);
-            var frameId = await RequestFrameIdAsync(writer, reader);
+            Assert.True(await WaitForStoppedNotificationAsync(reader, pendingStops, 30) != null);
+            var frameLine = i switch
+            {
+                0 => breakLine1,
+                1 => breakLine2,
+                _ => breakLine3,
+            };
+            var frameId = await RequestFrameIdAsync(writer, reader, pendingStops, frameLine);
             foreach (var (expression, expected) in expressionStages[i])
             {
-                await AssertExpressionResultAsync(writer, reader, frameId, expression, expected);
+                await AssertExpressionResultAsync(writer, reader, pendingStops, frameId, expression, expected);
             }
 
             if (i < expressionStages.Length - 1)
             {
-                await SendCommandAsync(writer, reader, $"{commandId++}-exec-continue");
+                await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-exec-continue");
             }
         }
 
-        await SendCommandAsync(writer, reader, $"{commandId++}-exec-continue");
-        await WaitForStoppedNotificationAsync(reader, 10);
-        await SendCommandAsync(writer, reader, $"{commandId++}-gdb-exit");
+        await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-exec-continue");
+        await WaitForStoppedNotificationAsync(reader, pendingStops, 10);
+        await SendCommandAsync(writer, reader, pendingStops, $"{commandId++}-gdb-exit");
         miProcess.Kill(true);
 
-        async Task<int> RequestFrameIdAsync(TextWriter writerInner, TextReader readerInner)
+        async Task<int> RequestFrameIdAsync(TextWriter writerInner, TextReader readerInner, Queue<string> pendingStopsInner, int? preferredLine)
         {
-            var resp = await SendCommandAsync(writerInner, readerInner, $"{commandId++}-stack-list-frames");
+            var resp = await SendCommandAsync(writerInner, readerInner, pendingStopsInner, $"{commandId++}-stack-list-frames");
+            if (preferredLine.HasValue)
+            {
+                foreach (Match frameMatch in Regex.Matches(resp, "\\{[^}]*\\}"))
+                {
+                    var idMatch = Regex.Match(frameMatch.Value, "id=\\\"(?<id>\\d+)\\\"");
+                    var lineMatch = Regex.Match(frameMatch.Value, "line=\\\"(?<line>\\d+)\\\"");
+                    if (idMatch.Success && lineMatch.Success && lineMatch.Groups["line"].Value == preferredLine.Value.ToString())
+                    {
+                        return int.Parse(idMatch.Groups["id"].Value);
+                    }
+                }
+            }
+
             var match = Regex.Match(resp, "id=\\\"(\\d+)\\\"");
             Assert.True(match.Success, "Failed to find frame id in stack-list-frames response");
             return int.Parse(match.Groups[1].Value);
         }
 
-        async Task AssertExpressionResultAsync(TextWriter writerInner, TextReader readerInner, int frameIdInner, string expression, string expectedValue)
+        async Task AssertExpressionResultAsync(TextWriter writerInner, TextReader readerInner, Queue<string> pendingStopsInner, int frameIdInner, string expression, string expectedValue)
         {
-                var resp = await SendCommandAsync(writerInner, readerInner, $"{commandId++}-data-evaluate-expression --expression=\"{expression}\" --frame={frameIdInner}");
-                var miLogPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sharpdbg_mi_debug_{miProcess.Id}.log");
-                if (System.IO.File.Exists(miLogPath))
-                {
-                    try
-                    {
-                        var miLog = System.IO.File.ReadAllText(miLogPath);
-                        _output.WriteLine($"[DEBUG-MI-FILE] {miLog}");
-                    }
-                    catch (System.Exception ex)
-                    {
-                        _output.WriteLine($"[DEBUG] Failed to read MI debug log: {ex.Message}");
-                        _output.WriteLine($"[DEBUG] Full MI response for expression '{expression}': {resp}");
-                    }
-                }
-                else
-                {
-                    _output.WriteLine($"[DEBUG] Full MI response for expression '{expression}': {resp}");
-                    if (expression == "a" || expression == "b")
-                    {
-                        _output.WriteLine($"[DEBUG] Value of '{expression}' at BREAK1: {ParseValue(resp)}");
-                    }
-                    if (expression == "b")
-                    {
-                        _output.WriteLine($"[DEBUG] Sending evaluation request for 'b'");
-                        _output.WriteLine($"[DEBUG] Full MI response for 'b': {resp}");
-                    }
-                }
+            var resp = await SendCommandAsync(writerInner, readerInner, pendingStopsInner, $"{commandId++}-data-evaluate-expression --expression=\"{expression}\" --frame={frameIdInner}");
+            _output.WriteLine($"[DEBUG] Full MI response for expression '{expression}': {resp}");
+            if (expression == "a" || expression == "b")
+            {
+                _output.WriteLine($"[DEBUG] Value of '{expression}' at BREAK1: {ParseValue(resp)}");
+            }
+            if (expression == "b")
+            {
+                _output.WriteLine($"[DEBUG] Sending evaluation request for 'b'");
+                _output.WriteLine($"[DEBUG] Full MI response for 'b': {resp}");
+            }
+
             Assert.Contains("^done", resp);
             _output.WriteLine($"Expression '{expression}' -> {resp}");
             Assert.Equal(expectedValue, ParseValue(resp));
         }
 
-        async Task<string> SendCommandAsync(TextWriter writerInner, TextReader readerInner, string command)
+        async Task<string> SendCommandAsync(TextWriter writerInner, TextReader readerInner, Queue<string> pendingStopsInner, string command)
         {
             await writerInner.WriteLineAsync(command);
-            var response = await ReadMiResponseAsync(readerInner, 5);
+            var response = await ReadMiResponseAsync(readerInner, pendingStopsInner, 5);
             Assert.True(response != null, $"MI did not respond to `{command}`");
             return response!;
         }
@@ -149,7 +153,7 @@ public class MiModeEvaluateExpressionTests
         return match.Groups["value"].Value;
     }
 
-    private static async Task<string?> ReadMiResponseAsync(TextReader reader, int timeoutSeconds)
+    private static async Task<string?> ReadMiResponseAsync(TextReader reader, Queue<string> pendingStops, int timeoutSeconds)
     {
         using var timeoutCts = new CancellationTokenSource(System.TimeSpan.FromSeconds(timeoutSeconds));
         using var linkedCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, TestContext.Current.CancellationToken);
@@ -157,8 +161,25 @@ public class MiModeEvaluateExpressionTests
         {
             while (!linkedCts.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync(linkedCts.Token).AsTask().WaitAsync(System.TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+                string? line = null;
+                using (var readCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token))
+                {
+                    readCts.CancelAfter(System.TimeSpan.FromSeconds(1));
+                    try
+                    {
+                        line = await reader.ReadLineAsync(readCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        continue;
+                    }
+                }
                 if (line == null) continue;
+                if (line.StartsWith("*stopped"))
+                {
+                    pendingStops.Enqueue(line);
+                    continue;
+                }
                 if (line.StartsWith("^") || Regex.IsMatch(line, "^\\d+\\^"))
                 {
                     return line;
@@ -171,15 +192,31 @@ public class MiModeEvaluateExpressionTests
         return null;
     }
 
-    private static async Task<string?> WaitForStoppedNotificationAsync(TextReader reader, int timeoutSeconds)
+    private static async Task<string?> WaitForStoppedNotificationAsync(TextReader reader, Queue<string> pendingStops, int timeoutSeconds)
     {
+        if (pendingStops.Count > 0)
+        {
+            return pendingStops.Dequeue();
+        }
         using var timeoutCts = new CancellationTokenSource(System.TimeSpan.FromSeconds(timeoutSeconds));
         using var linkedCts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, TestContext.Current.CancellationToken);
         try
         {
             while (!linkedCts.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync(linkedCts.Token).AsTask().WaitAsync(System.TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+                string? line = null;
+                using (var readCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token))
+                {
+                    readCts.CancelAfter(System.TimeSpan.FromSeconds(1));
+                    try
+                    {
+                        line = await reader.ReadLineAsync(readCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        continue;
+                    }
+                }
                 if (line != null && line.StartsWith("*stopped"))
                 {
                     return line;

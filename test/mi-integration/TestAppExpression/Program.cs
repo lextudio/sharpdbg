@@ -14,6 +14,10 @@ namespace TestAppExpression;
             Console.WriteLine("TestAppExpression starting");
             int a = 10;
             int b = 11;
+            decimal dec = 12345678901234567890123456m;
+            decimal longZeroDec = 0.00000000000000000017M;
+            decimal shortZeroDec = 0.17M;
+            int[] array1 = { 10, 20, 30, 40, 50 };
             int[] valueArray = { 10, 20, 30 };
             bool isTrue = true;
             bool isFalse = false;
@@ -24,10 +28,10 @@ namespace TestAppExpression;
             string str2 = "string2";
             int c = tc.b + b; // BREAK1
             int d = 99;
-            int e = c + a; // BREAK2
-            Console.WriteLine(str1 + str2);
-            tc.IncA(); // BREAK3
-            Console.WriteLine($"after inc, a={tc.a}");
+            int e = c + a;
+            Console.WriteLine(str1 + str2); // BREAK2
+            tc.IncA(); // BREAK3_CALL
+            Console.WriteLine($"after inc, a={tc.a}"); // BREAK3
             Thread.Sleep(500);
             Console.WriteLine("TestAppExpression exiting");
             Thread.Sleep(500);
@@ -49,7 +53,7 @@ namespace TestAppExpression;
 
         public void IncA()
         {
-            a++; // BREAK3_INSIDE
+            a++;
             Console.WriteLine($"IncA -> {a}");
         }
     }

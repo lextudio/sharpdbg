@@ -443,18 +443,31 @@ public partial class ManagedDebugger
 		try
 		{
 			var chains = thread.EnumerateChains();
+			int absoluteIndex = 0;
+			int produced = 0;
 			foreach (var chain in chains)
 			{
 				var frames = chain.Frames;
-				var filterFrames = frames.AsValueEnumerable().Skip(startFrame).Take(levels ?? int.MaxValue);
-
-				foreach (var (index, frame) in filterFrames.Index())
+				for (int i = 0; i < frames.Length; i++)
 				{
+					if (absoluteIndex < startFrame)
+					{
+						absoluteIndex++;
+						continue;
+					}
+
+					if (levels is not null && produced >= levels.Value)
+					{
+						// we've collected requested number of frames
+						return result;
+					}
+
+					var frame = frames[i];
 					if (frame is CorDebugILFrame ilFrame)
 					{
 						var function = ilFrame.Function;
 
-						var frameId = _variableManager.CreateReference(new VariablesReference(StoredReferenceKind.Scope, null, new ThreadId(threadId), new FrameStackDepth(index), null));
+						var frameId = _variableManager.CreateReference(new VariablesReference(StoredReferenceKind.Scope, null, new ThreadId(threadId), new FrameStackDepth(absoluteIndex), null));
 						var module = _modules[function.Module.BaseAddress];
 						var line = 0;
 						var column = 0;
@@ -486,7 +499,10 @@ public partial class ManagedDebugger
 							EndColumn =  endColumn,
 							Source = sourceFilePath
 						});
+						produced++;
 					}
+
+					absoluteIndex++;
 				}
 			}
 		}
@@ -598,7 +614,7 @@ public partial class ManagedDebugger
 	/// </summary>
 	public async Task<(string result, string? type, int variablesReference)> Evaluate(string expression, int? frameId)
 	{
-		_logger?.Invoke($"Evaluate: {expression}");
+		_logger?.Invoke($"Evaluate: {expression}, Frame ID: {frameId}");
 		if (frameId is null or 0) throw new InvalidOperationException("Frame ID is required for evaluation");
 
 		var variablesReference = _variableManager.GetReference(frameId.Value);
@@ -610,6 +626,10 @@ public partial class ManagedDebugger
 		var evalContext = new CompiledExpressionEvaluationContext(thread, variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth);
 		ArgumentNullException.ThrowIfNull(_expressionInterpreter);
 		var result = await _expressionInterpreter.Interpret(compiledExpression, evalContext);
+
+		_logger?.Invoke($"Variables Reference: {variablesReference}");
+		_logger?.Invoke($"Compiled Expression: {compiledExpression}");
+		_logger?.Invoke($"Evaluation Result: {result}");
 
 		if (result.Error is not null)
 		{

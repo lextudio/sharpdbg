@@ -29,6 +29,7 @@ public class ExpressionSyntaxVisitor(List<CommandBase> commands, bool isDebugger
 	public override void Visit(SyntaxNode? node)
 	{
 		if (node is null) throw new ArgumentNullException(nameof(node));
+
 		if (node.IsKind(SyntaxKind.ExpressionStatement))
 		{
 			ExpressionStatementCount++;
@@ -194,7 +195,38 @@ public class ExpressionSyntaxVisitor(List<CommandBase> commands, bool isDebugger
 
 				case SyntaxKind.NumericLiteralExpression:
 				case SyntaxKind.CharacterLiteralExpression: // 1 wchar
-					_commands.Add(new TwoOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), TypeAlias[node.GetFirstToken().Value.GetType()], node.GetFirstToken().Value));
+					{
+						var token = node.GetFirstToken();
+						var valueType = token.Value.GetType();
+						var typeArg = TypeAlias[valueType];
+						var text = token.Text;
+						if (text.EndsWith("f", StringComparison.OrdinalIgnoreCase))
+						{
+							typeArg = ePredefinedType.FloatKeyword;
+						}
+						else if (text.EndsWith("d", StringComparison.OrdinalIgnoreCase))
+						{
+							typeArg = ePredefinedType.DoubleKeyword;
+						}
+						else if (text.EndsWith("m", StringComparison.OrdinalIgnoreCase))
+						{
+							typeArg = ePredefinedType.DecimalKeyword;
+						}
+						else if (text.EndsWith("ul", StringComparison.OrdinalIgnoreCase) || text.EndsWith("lu", StringComparison.OrdinalIgnoreCase))
+						{
+							typeArg = ePredefinedType.ULongKeyword;
+						}
+						else if (text.EndsWith("l", StringComparison.OrdinalIgnoreCase))
+						{
+							typeArg = ePredefinedType.LongKeyword;
+						}
+						else if (text.EndsWith("u", StringComparison.OrdinalIgnoreCase))
+						{
+							typeArg = ePredefinedType.UIntKeyword;
+						}
+
+						_commands.Add(new TwoOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), typeArg, token.Value));
+					}
 					break;
 
 				case SyntaxKind.PredefinedType:
