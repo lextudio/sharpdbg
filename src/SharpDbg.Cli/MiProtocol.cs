@@ -60,10 +60,10 @@ internal static class MiProtocol
                         var kv = spec.Split(':');
                         var file = kv[0];
                         var lineNo = int.Parse(kv[1]);
-                        var bps = debugger.SetBreakpoints(file, new[] { lineNo });
-                        if (bps.Count > 0)
+                        var bp = debugger.AddBreakpoint(file, lineNo);
+                        if (bp != null)
                         {
-                            _writer.WriteLine($"{token}^done,bkpt={{number=\"{bps[0].Id}\",file=\"{file}\",line=\"{lineNo}\"}}");
+                            _writer.WriteLine($"{token}^done,bkpt={{number=\"{bp.Id}\",file=\"{file}\",line=\"{lineNo}\"}}");
                         }
                         else
                         {
