@@ -26,33 +26,67 @@ public class MiModeEvaluateExpressionTests
         _output.WriteLine($"MI ready: {ready}");
 
         var sourcePath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestAppExpression", "Program.cs" });
-        var breakLine = 25; // int c = tc.b + b; // BREAK1
+        var breakLine1 = 25;
+        var breakLine2 = 28;
+        var breakLine3 = 53;
         var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestAppExpression", "debug", "MiIntegrationTestAppExpression" });
 
         var commandId = 1;
-        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine}");
+        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine1}");
+        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine2}");
+        await SendCommandAsync(writer, reader, $"{commandId++}-break-insert {sourcePath}:{breakLine3}");
         await SendCommandAsync(writer, reader, $"{commandId++}-exec-run --program=\"{appPath}\"");
 
-        // Wait for breakpoint to be hit
-        Assert.True(await WaitForStoppedNotificationAsync(reader, 30) != null, "Expected to hit breakpoint");
-        var frameId = await RequestFrameIdAsync(writer, reader);
-
-        // Test some basic expression evaluations
-        var expressions = new (string Expression, string Expected)[]
+        var expressionStages = new[]
         {
-            ("a", "10"),
-            ("b", "11"),
-            ("tc.a", "11"),
-            ("tc.b", "11"),
-            ("str1", "string1"),
-            ("Program.Greeting", "hello"),
+            new (string Expression, string Expected)[]
+            {
+                ("a", "10"),
+                ("b", "11"),
+                ("a + b", "21"),
+                ("tc.a + b", "22"),
+                ("str1 + str2", "string1string2"),
+                ("valueArray[2]", "30"),
+                ("Program.Greeting", "hello"),
+                ("isTrue && !isFalse", "true"),
+                ("Program.Multiply(2, 3)", "6"),
+                ("optionalValue ?? fallbackValue", "5"),
+            },
+            new (string Expression, string Expected)[]
+            {
+                ("d + a", "109"),
+                ("e - c", "10"),
+                ("a < b", "true"),
+                ("!isFalse", "true"),
+                ("valueArray[0]", "10"),
+                ("isTrue || isFalse", "true"),
+            },
+            new (string Expression, string Expected)[]
+            {
+                ("tc.a", "12"),
+                ("tc.Sum", "23"),
+                ("tc.b == b", "true"),
+                ("tc.a + tc.b", "23"),
+            }
         };
 
-        foreach (var (expression, expected) in expressions)
+        for (int i = 0; i < expressionStages.Length; i++)
         {
-            await AssertExpressionResultAsync(writer, reader, frameId, expression, expected);
+            Assert.True(await WaitForStoppedNotificationAsync(reader, 30) != null);
+            var frameId = await RequestFrameIdAsync(writer, reader);
+            foreach (var (expression, expected) in expressionStages[i])
+            {
+                await AssertExpressionResultAsync(writer, reader, frameId, expression, expected);
+            }
+
+            if (i < expressionStages.Length - 1)
+            {
+                await SendCommandAsync(writer, reader, $"{commandId++}-exec-continue");
+            }
         }
 
+        await SendCommandAsync(writer, reader, $"{commandId++}-exec-continue");
+        await WaitForStoppedNotificationAsync(reader, 10);
         await SendCommandAsync(writer, reader, $"{commandId++}-gdb-exit");
         miProcess.Kill(true);
 
@@ -66,7 +100,34 @@ public class MiModeEvaluateExpressionTests
 
         async Task AssertExpressionResultAsync(TextWriter writerInner, TextReader readerInner, int frameIdInner, string expression, string expectedValue)
         {
-            var resp = await SendCommandAsync(writerInner, readerInner, $"{commandId++}-data-evaluate-expression --expression=\"{expression}\" --frame={frameIdInner}");
+                var resp = await SendCommandAsync(writerInner, readerInner, $"{commandId++}-data-evaluate-expression --expression=\"{expression}\" --frame={frameIdInner}");
+                var miLogPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"sharpdbg_mi_debug_{miProcess.Id}.log");
+                if (System.IO.File.Exists(miLogPath))
+                {
+                    try
+                    {
+                        var miLog = System.IO.File.ReadAllText(miLogPath);
+                        _output.WriteLine($"[DEBUG-MI-FILE] {miLog}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        _output.WriteLine($"[DEBUG] Failed to read MI debug log: {ex.Message}");
+                        _output.WriteLine($"[DEBUG] Full MI response for expression '{expression}': {resp}");
+                    }
+                }
+                else
+                {
+                    _output.WriteLine($"[DEBUG] Full MI response for expression '{expression}': {resp}");
+                    if (expression == "a" || expression == "b")
+                    {
+                        _output.WriteLine($"[DEBUG] Value of '{expression}' at BREAK1: {ParseValue(resp)}");
+                    }
+                    if (expression == "b")
+                    {
+                        _output.WriteLine($"[DEBUG] Sending evaluation request for 'b'");
+                        _output.WriteLine($"[DEBUG] Full MI response for 'b': {resp}");
+                    }
+                }
             Assert.Contains("^done", resp);
             _output.WriteLine($"Expression '{expression}' -> {resp}");
             Assert.Equal(expectedValue, ParseValue(resp));

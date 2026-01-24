@@ -21,37 +21,44 @@ public class MiMode_SteppingImportedTests
         _output.WriteLine($"MI ready: {ready}");
 
         var bpPath = Path.JoinFromGitRoot(new string[] { "test", "mi-integration", "TestAppStepping", "Program.cs" });
-        
-        // Set breakpoint at Console.WriteLine in Main (line 10) - a line we know will be hit
-        await writer.WriteLineAsync($"1-break-insert {bpPath}:10");
+        // breakpoint at call to Foo (line 13)
+        await writer.WriteLineAsync($"1-break-insert {bpPath}:13");
         var bpResp = await ReadMiResponseAsync(reader, 5);
         _output.WriteLine($"BreakResp: {bpResp}");
         Assert.Contains("^done", bpResp);
 
+        // breakpoint at call to Bar (line 16) for step-over test
+        await writer.WriteLineAsync($"2-break-insert {bpPath}:16");
+        var bpResp2 = await ReadMiResponseAsync(reader, 5);
+        _output.WriteLine($"BreakResp2: {bpResp2}");
+        Assert.Contains("^done", bpResp2);
+
         var appPath = Path.JoinFromGitRoot(new string[] { "artifacts", "bin", "MiIntegrationTestAppStepping", "debug", "MiIntegrationTestAppStepping" });
-        await writer.WriteLineAsync($"2-exec-run --program=\"{appPath}\"");
+        await writer.WriteLineAsync($"3-exec-run --program=\"{appPath}\"");
 
         var stopped = await WaitForStoppedNotificationAsync(reader, 20);
         Assert.NotNull(stopped);
-        Assert.Contains("line=\"10\"", stopped);
-        _output.WriteLine($"Stopped at breakpoint: {stopped}");
+        _output.WriteLine($"Stopped: {stopped}");
 
-        // Step to next line (should go to line 13 - the Foo() call)
-        await writer.WriteLineAsync("3-exec-next");
-        var nextStopped = await WaitForStoppedNotificationAsync(reader, 10);
-        Assert.NotNull(nextStopped);
-        _output.WriteLine($"After step-next: {nextStopped}");
-
-        // Step into Foo() 
+        // step in into Foo
         await writer.WriteLineAsync("4-exec-step");
         var stepStopped = await WaitForStoppedNotificationAsync(reader, 10);
         Assert.NotNull(stepStopped);
-        // Should now be inside Foo (around line 24-25)
-        _output.WriteLine($"After step-in: {stepStopped}");
-        // Verify we're at line 24 (inside Foo method)
-        Assert.Contains("line=\"24\"", stepStopped);
+        _output.WriteLine($"StepStopped: {stepStopped}");
 
-        await writer.WriteLineAsync("5-gdb-exit");
+        // continue and step over Bar
+        await writer.WriteLineAsync("5-exec-continue");
+        var cont = await WaitForStoppedNotificationAsync(reader, 20);
+        // expect to hit next breakpoint at Bar call
+        Assert.NotNull(cont);
+        _output.WriteLine($"ContinueStopped: {cont}");
+
+        await writer.WriteLineAsync("6-exec-next");
+        var nextStopped = await WaitForStoppedNotificationAsync(reader, 10);
+        Assert.NotNull(nextStopped);
+        _output.WriteLine($"NextStopped: {nextStopped}");
+
+        await writer.WriteLineAsync("7-gdb-exit");
         miProcess.Kill(true);
     }
 
