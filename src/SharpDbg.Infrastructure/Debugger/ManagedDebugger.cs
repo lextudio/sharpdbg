@@ -25,6 +25,8 @@ public partial class ManagedDebugger : IDisposable
 	private bool _justMyCode;
 	private AsyncStepper? _asyncStepper;
 	private CompiledExpressionInterpreter _expressionInterpreter = null!;
+	private bool _stopAtEntryActive;
+	private bool _stopAtEntrySignaled;
 
 	public event Action<int, string>? OnStopped;
 	// ThreadId, FilePath, Line, Column, Reason
@@ -99,6 +101,11 @@ public partial class ManagedDebugger : IDisposable
 
 	private void ContinueProcess()
 	{
+		if (_stopAtEntryActive && _stopAtEntrySignaled)
+		{
+			_logger?.Invoke("Auto-continue suppressed (stop-at-entry signaled)");
+			return;
+		}
 		if (_rawProcess != null)
 		{
 			IsRunning = true;
