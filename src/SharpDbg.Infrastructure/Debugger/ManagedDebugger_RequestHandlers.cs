@@ -606,6 +606,67 @@ public partial class ManagedDebugger
 		return (value, friendlyTypeName, 0);
 	}
 
+	public async Task<string> ApplyWpfHotReload(string helperAssemblyPath, string filePath, string xamlText)
+	{
+		_logger?.Invoke($"ApplyWpfHotReload: {filePath}");
+
+		var shouldResume = IsRunning;
+		if (shouldResume)
+		{
+			Pause();
+			await Task.Delay(100);
+		}
+
+		try
+		{
+			var frameId = TryGetEvaluationFrameId();
+			if (frameId is null)
+			{
+				return "error: no stack frame available for evaluation";
+			}
+
+			var normalizedHelperPath = EscapeForExpression(helperAssemblyPath);
+			var loadExpression = $"System.Reflection.Assembly.LoadFrom(\"{normalizedHelperPath}\").FullName";
+			var (loadResult, _, _) = await Evaluate(loadExpression, frameId.Value);
+			_logger?.Invoke($"WPF helper load result: {loadResult}");
+
+			var normalizedFilePath = EscapeForExpression(filePath);
+			var base64Text = Convert.ToBase64String(Encoding.UTF8.GetBytes(xamlText));
+			var applyExpression =
+				$"WpfHotReload.Runtime.WpfHotReloadAgent.ApplyXamlTextFromBase64(\"{normalizedFilePath}\", \"{base64Text}\")";
+			var (applyResult, _, _) = await Evaluate(applyExpression, frameId.Value);
+			return applyResult;
+		}
+		finally
+		{
+			if (shouldResume)
+			{
+				Continue();
+			}
+		}
+	}
+
+	private int? TryGetEvaluationFrameId()
+	{
+		var threads = GetThreads();
+		foreach (var thread in threads)
+		{
+			var frames = GetStackTrace(thread.id, 0, 1);
+			var frame = frames.FirstOrDefault();
+			if (frame is not null)
+			{
+				return frame.Id;
+			}
+		}
+
+		return null;
+	}
+
+	private static string EscapeForExpression(string value)
+	{
+		return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+	}
+
 	/// <summary>
 	/// Terminate the debugged process
 	/// </summary>

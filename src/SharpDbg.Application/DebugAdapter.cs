@@ -60,6 +60,17 @@ public class DebugAdapter : DebugAdapterBase
 		return default;
 	}
 
+	private static string? GetRequestValue(object? requestArgs, string key)
+	{
+		if (requestArgs is JObject jObject &&
+			jObject.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var token))
+		{
+			return token.Type == JTokenType.Null ? null : token.ToObject<string>();
+		}
+
+		return null;
+	}
+
 	private void SubscribeToDebuggerEvents()
 	{
 		_debugger.OnStopped += (threadId, reason) =>
@@ -490,6 +501,46 @@ public class DebugAdapter : DebugAdapterBase
 		});
 	}
 
+	protected override ResponseBody HandleProtocolRequest(string requestType, object requestArgs)
+	{
+		if (!string.Equals(requestType, "wpfHotReload/applyXamlText", StringComparison.Ordinal))
+		{
+			return base.HandleProtocolRequest(requestType, requestArgs);
+		}
+
+		return ExecuteWithExceptionHandling(() =>
+		{
+			var helperAssemblyPath = GetRequestValue(requestArgs, "helperAssemblyPath");
+			var filePath = GetRequestValue(requestArgs, "filePath");
+			var xamlText = GetRequestValue(requestArgs, "xamlText");
+
+			if (string.IsNullOrWhiteSpace(helperAssemblyPath))
+			{
+				throw new ProtocolException("Missing helperAssemblyPath");
+			}
+
+			if (string.IsNullOrWhiteSpace(filePath))
+			{
+				throw new ProtocolException("Missing filePath");
+			}
+
+			if (xamlText is null)
+			{
+				throw new ProtocolException("Missing xamlText");
+			}
+
+			var result = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
+				.GetAwaiter()
+				.GetResult();
+
+			return new WpfHotReloadResponse
+			{
+				Success = !result.StartsWith("error:", StringComparison.OrdinalIgnoreCase),
+				Message = result,
+			};
+		});
+	}
+
 	// Coordinate conversion helpers
 	private int ConvertClientLineToDebugger(int line)
 	{
@@ -527,4 +578,11 @@ public class DebugAdapter : DebugAdapterBase
 			_ => StoppedEvent.ReasonValue.Unknown
 		};
 	}
+}
+
+internal sealed class WpfHotReloadResponse : ResponseBody
+{
+	public bool Success { get; set; }
+
+	public string Message { get; set; } = string.Empty;
 }
