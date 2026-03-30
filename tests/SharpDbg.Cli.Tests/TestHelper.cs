@@ -52,6 +52,13 @@ public static partial class TestHelper
 		return debugProtocolHost;
 	}
 
+	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, bool stopAtEntry = false)
+	{
+		var launchRequest = DebugAdapterProcessHelper.GetLaunchRequest(stopAtEntry);
+		debugProtocolHost.SendRequestSync(launchRequest);
+		return debugProtocolHost;
+	}
+
 	public static async Task<DebugProtocolHost> WaitForInitializedEvent(this DebugProtocolHost debugProtocolHost, TaskCompletionSource initializedEventTcs)
 	{
 		await initializedEventTcs.Task.WaitAsync(TestContext.Current.CancellationToken);

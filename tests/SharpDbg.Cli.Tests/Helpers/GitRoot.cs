@@ -6,19 +6,34 @@ public static class GitRoot
 	public static string GetGitRootPath()
 	{
 		if (_gitRoot is not null) return _gitRoot;
-		var currentDirectory = Directory.GetCurrentDirectory();
-		var gitRoot = currentDirectory;
-		while (!Directory.Exists(Path.Combine(gitRoot, ".git")))
+		var searchRoots = new[]
 		{
-			gitRoot = Path.GetDirectoryName(gitRoot); // parent directory
-			if (string.IsNullOrWhiteSpace(gitRoot))
+			Directory.GetCurrentDirectory(),
+			AppContext.BaseDirectory
+		}.Where(path => string.IsNullOrWhiteSpace(path) is false).Distinct();
+
+		foreach (var root in searchRoots)
+		{
+			var gitRoot = root;
+			while (string.IsNullOrWhiteSpace(gitRoot) is false)
 			{
-				throw new Exception("Could not find git root");
+				if (IsGitRoot(gitRoot))
+				{
+					_gitRoot = gitRoot;
+					return _gitRoot;
+				}
+
+				gitRoot = Path.GetDirectoryName(gitRoot);
 			}
 		}
 
-		_gitRoot = gitRoot;
-		return _gitRoot;
+		throw new Exception("Could not find git root");
+	}
+
+	private static bool IsGitRoot(string path)
+	{
+		var gitPath = Path.Combine(path, ".git");
+		return Directory.Exists(gitPath) || File.Exists(gitPath);
 	}
 }
 

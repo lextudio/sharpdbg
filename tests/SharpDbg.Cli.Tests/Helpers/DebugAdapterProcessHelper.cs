@@ -89,6 +89,31 @@ public static class DebugAdapterProcessHelper
 		};
 	}
 
+	public static string GetDebuggableProgramPath()
+	{
+		var filePath = Path.JoinFromGitRoot("artifacts", "bin", "DebuggableConsoleApp", "debug", OperatingSystem.IsWindows() ? "DebuggableConsoleApp.exe" : "DebuggableConsoleApp");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("DebuggableConsoleApp executable not found", filePath);
+		return filePath;
+	}
+
+	public static LaunchRequest GetLaunchRequest(bool stopAtEntry = false)
+	{
+		var programPath = GetDebuggableProgramPath();
+		return new LaunchRequest
+		{
+			ConfigurationProperties = new Dictionary<string, JToken>
+			{
+				["name"] = "LaunchRequestName",
+				["type"] = "coreclr",
+				["program"] = programPath,
+				["cwd"] = Path.GetDirectoryName(programPath)!,
+				["args"] = new JArray(),
+				["console"] = "internalConsole",
+				["stopAtEntry"] = stopAtEntry
+			}
+		};
+	}
+
 	public static SetBreakpointsRequest GetSetBreakpointsRequest(int? line = null, string? filePath = null)
 	{
 		line ??= 22;
