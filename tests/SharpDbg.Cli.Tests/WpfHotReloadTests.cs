@@ -267,6 +267,8 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		var beforePaneWidth = await EvaluateExpressionAsync(client, frameId, "GetPaneWidth()");
 		var beforeTitleHash = await EvaluateExpressionAsync(client, frameId, "GetPaneTitleHashCode()");
 		var beforeBodyHash = await EvaluateExpressionAsync(client, frameId, "GetPaneBodyHashCode()");
+		var beforeListItemOneHash = await EvaluateExpressionAsync(client, frameId, "GetPaneListItemOneHashCode()");
+		var beforeListItemTwoHash = await EvaluateExpressionAsync(client, frameId, "GetPaneListItemTwoHashCode()");
 		beforePaneWidth.Should().Be("NaN");
 
 		const string xamlText =
@@ -274,7 +276,10 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 			"xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" Width=\"321\"><Border x:Name=\"PaneBorder\" Padding=\"10\" Background=\"LightGreen\">" +
 			"<StackPanel x:Name=\"PaneStack\"><TextBlock x:Name=\"PaneBody\" Text=\"Nested body update\" />" +
 			"<TextBlock x:Name=\"PaneInserted\" Text=\"Inserted sibling\" FontStyle=\"Italic\" />" +
-			"<TextBlock x:Name=\"PaneTitle\" Text=\"Nested live update\" FontSize=\"20\" /></StackPanel></Border></UserControl>";
+			"<TextBlock x:Name=\"PaneTitle\" Text=\"Nested live update\" FontSize=\"20\" />" +
+			"<ListBox x:Name=\"PaneList\"><TextBlock x:Name=\"PaneListItemTwo\" Text=\"Second item updated\" />" +
+			"<TextBlock x:Name=\"PaneListItemInserted\" Text=\"Inserted item\" />" +
+			"<TextBlock x:Name=\"PaneListItemOne\" Text=\"First item updated\" /></ListBox></StackPanel></Border></UserControl>";
 
 		var response = await client.SendRequestAsync("vsCustomMessage", new
 		{
@@ -296,6 +301,10 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneBodyHashCode()")).Should().Be(beforeBodyHash);
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneTitleText()")).Should().Be("Nested live update");
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneBodyText()")).Should().Be("Nested body update");
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemOneHashCode()")).Should().Be(beforeListItemOneHash);
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemTwoHashCode()")).Should().Be(beforeListItemTwoHash);
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemOneText()")).Should().Be("First item updated");
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemTwoText()")).Should().Be("Second item updated");
 
 		var disconnectResponse = await client.SendRequestAsync("disconnect", new
 		{
