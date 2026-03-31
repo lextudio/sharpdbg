@@ -260,10 +260,16 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 
 		var stoppedEvent = await client.WaitForEventAsync("stopped");
 		stoppedEvent["body"]?["reason"]?.ToObject<string>().Should().Be("breakpoint");
+		var threadId = stoppedEvent["body"]?["threadId"]?.ToObject<int>();
+		threadId.Should().NotBeNull();
+		var frameId = await GetTopFrameIdAsync(client, threadId!.Value);
+		var beforePaneHash = await EvaluateExpressionAsync(client, frameId, "GetPaneHashCode()");
+		var beforePaneWidth = await EvaluateExpressionAsync(client, frameId, "GetPaneWidth()");
+		beforePaneWidth.Should().Be("NaN");
 
 		const string xamlText =
 			"<UserControl x:Class=\"sample.SamplePane\" xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" " +
-			"xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"><Border Padding=\"10\" Background=\"LightGreen\">" +
+			"xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" Width=\"321\"><Border Padding=\"10\" Background=\"LightGreen\">" +
 			"<StackPanel><TextBlock Text=\"Nested live update\" FontSize=\"20\" /></StackPanel></Border></UserControl>";
 
 		var response = await client.SendRequestAsync("vsCustomMessage", new
@@ -280,6 +286,8 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		response["success"]?.ToObject<bool>().Should().BeTrue();
 		response["body"]?["responseMessage"]?["parameter1"]?.ToObject<bool>().Should().BeTrue();
 		response["body"]?["responseMessage"]?["parameter2"]?.ToObject<string>().Should().Be("ok: content control updated");
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneHashCode()")).Should().Be(beforePaneHash);
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneWidth()")).Should().Be("321");
 
 		var disconnectResponse = await client.SendRequestAsync("disconnect", new
 		{
@@ -288,5 +296,31 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 			suspendDebuggee = false
 		});
 		disconnectResponse["success"]?.ToObject<bool>().Should().BeTrue();
+	}
+
+	private static async Task<int> GetTopFrameIdAsync(RawDapClient client, int threadId)
+	{
+		var stackTraceResponse = await client.SendRequestAsync("stackTrace", new
+		{
+			threadId,
+			startFrame = 0,
+			levels = 1
+		});
+
+		stackTraceResponse["success"]?.ToObject<bool>().Should().BeTrue();
+		return stackTraceResponse["body"]?["stackFrames"]?.First?["id"]?.ToObject<int>() ?? 0;
+	}
+
+	private static async Task<string> EvaluateExpressionAsync(RawDapClient client, int frameId, string expression)
+	{
+		var evaluateResponse = await client.SendRequestAsync("evaluate", new
+		{
+			expression,
+			frameId,
+			context = "repl"
+		});
+
+		evaluateResponse["success"]?.ToObject<bool>().Should().BeTrue();
+		return evaluateResponse["body"]?["result"]?.ToObject<string>() ?? string.Empty;
 	}
 }
