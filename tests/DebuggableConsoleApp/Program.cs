@@ -8,7 +8,7 @@ public static class Program
 {
 	public static void Main(string[] args)
 	{
-		_ = typeof(WpfHotReloadAgent);
+		var hotReloadWarmup = WpfHotReloadAgent.ApplyXamlTextFromBase64("warmup.xaml", "");
 		Console.WriteLine("DebuggableConsoleApp is running");
 		Console.WriteLine("Log2");
 		var myLambdaClass = new MyLambdaClass();

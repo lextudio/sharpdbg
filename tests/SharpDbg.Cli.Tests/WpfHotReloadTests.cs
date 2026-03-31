@@ -70,6 +70,8 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		var stoppedEvent = await client.WaitForEventAsync("stopped");
 		stoppedEvent["body"]?["reason"]?.ToObject<string>().Should().Be("breakpoint");
 
+		const string xamlText = "<Grid><TextBlock Text=\"Hello\" /></Grid>";
+
 		var response = await client.SendRequestAsync("vsCustomMessage", new
 		{
 			message = new
@@ -78,12 +80,12 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 				messageCode = 1001,
 				parameter1 = DebugAdapterProcessHelper.GetWpfHotReloadRuntimeStubPath(),
 				parameter2 = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs"),
-				xamlText = "<Grid><TextBlock Text=\"Hello\" /></Grid>"
+				xamlText
 			}
 		});
 		response["success"]?.ToObject<bool>().Should().BeTrue();
 		response["body"]?["responseMessage"]?["parameter1"]?.ToObject<bool>().Should().BeTrue();
-		response["body"]?["responseMessage"]?["parameter2"]?.ToObject<string>().Should().Be("applied:Program.cs:38");
+		response["body"]?["responseMessage"]?["parameter2"]?.ToObject<string>().Should().Be($"applied:Program.cs:{xamlText.Length}");
 
 		var disconnectResponse = await client.SendRequestAsync("disconnect", new
 		{

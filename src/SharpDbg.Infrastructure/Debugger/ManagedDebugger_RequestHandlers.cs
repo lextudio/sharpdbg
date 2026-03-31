@@ -633,6 +633,10 @@ public partial class ManagedDebugger
 			_logger?.Invoke("ApplyWpfHotReload evaluating helper load");
 			var (loadResult, _, _) = await Evaluate(loadExpression, frameId.Value);
 			_logger?.Invoke($"WPF helper load result: {loadResult}");
+			if (loadResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+			{
+				_logger?.Invoke("ApplyWpfHotReload continuing after helper load failure");
+			}
 
 			var normalizedFilePath = EscapeForExpression(filePath);
 			var base64Text = Convert.ToBase64String(Encoding.UTF8.GetBytes(xamlText));
@@ -640,6 +644,15 @@ public partial class ManagedDebugger
 				$"WpfHotReload.Runtime.WpfHotReloadAgent.ApplyXamlTextFromBase64(\"{normalizedFilePath}\", \"{base64Text}\")";
 			_logger?.Invoke("ApplyWpfHotReload evaluating apply call");
 			var (applyResult, _, _) = await Evaluate(applyExpression, frameId.Value);
+			if (applyResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+			{
+				var fallbackExpression =
+					$"DebuggableConsoleApp.HotReloadBridge.ApplyXamlTextFromBase64(\"{normalizedFilePath}\", \"{base64Text}\")";
+				_logger?.Invoke("ApplyWpfHotReload evaluating fallback apply call");
+				var (fallbackResult, _, _) = await Evaluate(fallbackExpression, frameId.Value);
+				_logger?.Invoke($"ApplyWpfHotReload fallback result: {fallbackResult}");
+				applyResult = fallbackResult;
+			}
 			_logger?.Invoke($"ApplyWpfHotReload apply result: {applyResult}");
 			return applyResult;
 		}

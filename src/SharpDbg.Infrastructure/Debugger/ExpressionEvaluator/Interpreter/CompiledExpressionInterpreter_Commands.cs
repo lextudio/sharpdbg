@@ -143,11 +143,17 @@ public partial class CompiledExpressionInterpreter
 		if (objType == null && objValue == null) throw new InvalidOperationException("Could not resolve target type for method invocation");
 
 		CorDebugFunction? function = null;
-		bool? searchStatic = objType is null;
 
 		if (objType != null)
 		{
-			function = await FindMethodOnType(objType, methodName, args, searchStatic.Value, idsEmpty);
+			// Most expressions should bind as instance calls first, but type-qualified
+			// expressions such as System.Reflection.Assembly.LoadFrom(...) resolve to a
+			// synthetic type object here and need a static-method fallback.
+			function = await FindMethodOnType(objType, methodName, args, false, idsEmpty);
+			if (function == null)
+			{
+				function = await FindMethodOnType(objType, methodName, args, true, idsEmpty);
+			}
 		}
 
 		if (function == null)
