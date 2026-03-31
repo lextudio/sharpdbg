@@ -265,12 +265,14 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		var frameId = await GetTopFrameIdAsync(client, threadId!.Value);
 		var beforePaneHash = await EvaluateExpressionAsync(client, frameId, "GetPaneHashCode()");
 		var beforePaneWidth = await EvaluateExpressionAsync(client, frameId, "GetPaneWidth()");
+		var beforeTitleHash = await EvaluateExpressionAsync(client, frameId, "GetPaneTitleHashCode()");
 		beforePaneWidth.Should().Be("NaN");
 
 		const string xamlText =
 			"<UserControl x:Class=\"sample.SamplePane\" xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" " +
-			"xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" Width=\"321\"><Border Padding=\"10\" Background=\"LightGreen\">" +
-			"<StackPanel><TextBlock Text=\"Nested live update\" FontSize=\"20\" /></StackPanel></Border></UserControl>";
+			"xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" Width=\"321\"><Border x:Name=\"PaneBorder\" Padding=\"10\" Background=\"LightGreen\">" +
+			"<StackPanel x:Name=\"PaneStack\"><TextBlock x:Name=\"PaneTitle\" Text=\"Nested live update\" FontSize=\"20\" />" +
+			"<TextBlock x:Name=\"PaneBody\" Text=\"Nested body update\" /></StackPanel></Border></UserControl>";
 
 		var response = await client.SendRequestAsync("vsCustomMessage", new
 		{
@@ -288,6 +290,8 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		response["body"]?["responseMessage"]?["parameter2"]?.ToObject<string>().Should().Be("ok: content control updated");
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneHashCode()")).Should().Be(beforePaneHash);
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneWidth()")).Should().Be("321");
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneTitleHashCode()")).Should().Be(beforeTitleHash);
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneTitleText()")).Should().Be("Nested live update");
 
 		var disconnectResponse = await client.SendRequestAsync("disconnect", new
 		{
