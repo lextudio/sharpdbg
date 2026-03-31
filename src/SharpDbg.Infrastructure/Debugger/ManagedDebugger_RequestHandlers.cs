@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using ClrDebug;
@@ -88,7 +88,7 @@ public partial class ManagedDebugger
 		}
 
 		// Create process suspended
-		var result = dbgshim.CreateProcessForLaunch(
+		var launchResult = dbgshim.CreateProcessForLaunch(
 			commandLine.ToString(),
 			bSuspendProcess: true,
 			lpEnvironment: IntPtr.Zero,
@@ -103,8 +103,8 @@ public partial class ManagedDebugger
 			}
 		}
 
-		var processId = result.ProcessId;
-		var resumeHandle = result.ResumeHandle;
+		var processId = launchResult.ProcessId;
+		var resumeHandle = launchResult.ResumeHandle;
 
 		_logger?.Invoke($"Process created suspended with PID: {processId}");
 
