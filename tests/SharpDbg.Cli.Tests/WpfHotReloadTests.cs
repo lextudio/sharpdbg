@@ -269,6 +269,7 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		var beforeBodyHash = await EvaluateExpressionAsync(client, frameId, "GetPaneBodyHashCode()");
 		var beforeListItemOneHash = await EvaluateExpressionAsync(client, frameId, "GetPaneListItemOneHashCode()");
 		var beforeListItemTwoHash = await EvaluateExpressionAsync(client, frameId, "GetPaneListItemTwoHashCode()");
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneListSelectedIndex()")).Should().Be("1");
 		beforePaneWidth.Should().Be("NaN");
 
 		const string xamlText =
@@ -277,7 +278,7 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 			"<StackPanel x:Name=\"PaneStack\"><TextBlock x:Name=\"PaneBody\" Text=\"Nested body update\" />" +
 			"<TextBlock x:Name=\"PaneInserted\" Text=\"Inserted sibling\" FontStyle=\"Italic\" />" +
 			"<TextBlock x:Name=\"PaneTitle\" Text=\"Nested live update\" FontSize=\"20\" />" +
-			"<ListBox x:Name=\"PaneList\"><TextBlock x:Name=\"PaneListItemTwo\" Text=\"Second item updated\" />" +
+			"<ListBox x:Name=\"PaneList\" SelectedIndex=\"0\"><TextBlock x:Name=\"PaneListItemTwo\" Text=\"Second item updated\" />" +
 			"<TextBlock x:Name=\"PaneListItemInserted\" Text=\"Inserted item\" />" +
 			"<TextBlock x:Name=\"PaneListItemOne\" Text=\"First item updated\" /></ListBox></StackPanel></Border></UserControl>";
 
@@ -305,6 +306,7 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemTwoHashCode()")).Should().Be(beforeListItemTwoHash);
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemOneText()")).Should().Be("First item updated");
 		(await EvaluateExpressionAsync(client, frameId, "GetPaneListItemTwoText()")).Should().Be("Second item updated");
+		(await EvaluateExpressionAsync(client, frameId, "GetPaneListSelectedIndex()")).Should().Be("0");
 
 		var disconnectResponse = await client.SendRequestAsync("disconnect", new
 		{
