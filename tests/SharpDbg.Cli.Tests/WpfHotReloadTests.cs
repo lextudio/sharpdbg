@@ -95,4 +95,101 @@ public class WpfHotReloadTests(ITestOutputHelper testOutputHelper)
 		});
 		disconnectResponse["success"]?.ToObject<bool>().Should().BeTrue();
 	}
+
+	[Fact]
+	public async Task ApplyXamlText_CustomRequest_UpdatesRealWpfSample_InProc()
+	{
+		DebugAdapterProcessHelper.EnsureProjectBuilt(DebugAdapterProcessHelper.GetWorkspaceSampleProjectPath(), testOutputHelper);
+		DebugAdapterProcessHelper.EnsureProjectBuilt(DebugAdapterProcessHelper.GetWorkspaceWpfHotReloadRuntimeProjectPath(), testOutputHelper);
+
+		var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+		using var client = new RawDapClient(input, output);
+
+		var initializeResponse = await client.SendRequestAsync("initialize", new
+		{
+			clientID = "sharpdbg-tests",
+			clientName = "SharpDbg Tests",
+			adapterID = "coreclr",
+			locale = "en-us",
+			linesStartAt1 = true,
+			columnsStartAt1 = true,
+			pathFormat = "path",
+			supportsVariableType = true,
+			supportsVariablePaging = true,
+			supportsRunInTerminalRequest = true,
+			supportsHandshakeRequest = true
+		});
+		initializeResponse["success"]?.ToObject<bool>().Should().BeTrue();
+
+		var initializedEvent = await client.WaitForEventAsync("initialized");
+		initializedEvent["event"]?.ToObject<string>().Should().Be("initialized");
+
+		var programPath = DebugAdapterProcessHelper.GetWorkspaceSampleProgramPath();
+		var launchResponse = await client.SendRequestAsync("launch", new
+		{
+			name = "LaunchRequestName",
+			type = "coreclr",
+			program = programPath,
+			cwd = Path.GetDirectoryName(programPath)!,
+			args = Array.Empty<string>(),
+			stopAtEntry = false,
+			console = "internalConsole"
+		});
+		launchResponse["success"]?.ToObject<bool>().Should().BeTrue();
+
+		var sourcePath = DebugAdapterProcessHelper.GetWorkspaceSampleMainWindowCodeBehindPath();
+		var lines = File.ReadAllLines(sourcePath);
+		var breakpointLine = Array.FindIndex(lines, line => line.Contains("InitializeComponent();")) + 1;
+		breakpointLine.Should().BeGreaterThan(0);
+
+		var setBreakpointsResponse = await client.SendRequestAsync("setBreakpoints", new
+		{
+			source = new
+			{
+				path = sourcePath
+			},
+			breakpoints = new[]
+			{
+				new
+				{
+					line = breakpointLine
+				}
+			}
+		});
+		setBreakpointsResponse["success"]?.ToObject<bool>().Should().BeTrue();
+
+		var configurationDoneResponse = await client.SendRequestAsync("configurationDone");
+		configurationDoneResponse["success"]?.ToObject<bool>().Should().BeTrue();
+
+		var stoppedEvent = await client.WaitForEventAsync("stopped");
+		stoppedEvent["body"]?["reason"]?.ToObject<string>().Should().Be("breakpoint");
+
+		const string xamlText =
+			"<Window x:Class=\"sample.MainWindow\" xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" " +
+			"xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" Title=\"Hot Reloaded\"><Grid>" +
+			"<TextBlock Text=\"Live update from SharpDbg\" /></Grid></Window>";
+
+		var response = await client.SendRequestAsync("vsCustomMessage", new
+		{
+			message = new
+			{
+				sourceId = "wpfHotReload",
+				messageCode = 1001,
+				parameter1 = DebugAdapterProcessHelper.GetWorkspaceWpfHotReloadRuntimePath(),
+				parameter2 = DebugAdapterProcessHelper.GetWorkspaceSampleMainWindowXamlPath(),
+				xamlText
+			}
+		});
+		response["success"]?.ToObject<bool>().Should().BeTrue();
+		response["body"]?["responseMessage"]?["parameter1"]?.ToObject<bool>().Should().BeTrue();
+		response["body"]?["responseMessage"]?["parameter2"]?.ToObject<string>().Should().Be("ok: window updated");
+
+		var disconnectResponse = await client.SendRequestAsync("disconnect", new
+		{
+			restart = false,
+			terminateDebuggee = true,
+			suspendDebuggee = false
+		});
+		disconnectResponse["success"]?.ToObject<bool>().Should().BeTrue();
+	}
 }

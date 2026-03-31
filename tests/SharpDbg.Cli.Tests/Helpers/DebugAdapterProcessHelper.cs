@@ -8,6 +8,11 @@ namespace SharpDbg.Cli.Tests.Helpers;
 
 public static class DebugAdapterProcessHelper
 {
+	public static string GetWorkspaceRootPath()
+	{
+		return Path.GetFullPath(Path.Combine(GitRoot.GetGitRootPath(), "..", ".."));
+	}
+
 	public static Process GetDebugAdapterProcess()
 	{
 		var process = new Process
@@ -101,6 +106,94 @@ public static class DebugAdapterProcessHelper
 		var filePath = Path.JoinFromGitRoot("artifacts", "bin", "WpfHotReload.RuntimeStub", "debug", "WpfHotReload.RuntimeStub.dll");
 		if (File.Exists(filePath) is false) throw new FileNotFoundException("WpfHotReload.RuntimeStub assembly not found", filePath);
 		return filePath;
+	}
+
+	public static string GetWorkspaceSampleProjectPath()
+	{
+		var filePath = Path.Combine(GetWorkspaceRootPath(), "sample", "sample.csproj");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("Workspace sample project not found", filePath);
+		return filePath;
+	}
+
+	public static string GetWorkspaceSampleProgramPath()
+	{
+		var filePath = Path.Combine(GetWorkspaceRootPath(), "sample", "bin", "Debug", "net10.0-windows", "sample.exe");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("Workspace sample executable not found", filePath);
+		return filePath;
+	}
+
+	public static string GetWorkspaceSampleMainWindowXamlPath()
+	{
+		var filePath = Path.Combine(GetWorkspaceRootPath(), "sample", "MainWindow.xaml");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("Workspace sample XAML not found", filePath);
+		return filePath;
+	}
+
+	public static string GetWorkspaceSampleMainWindowCodeBehindPath()
+	{
+		var filePath = Path.Combine(GetWorkspaceRootPath(), "sample", "MainWindow.xaml.cs");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("Workspace sample code-behind not found", filePath);
+		return filePath;
+	}
+
+	public static string GetWorkspaceWpfHotReloadRuntimeProjectPath()
+	{
+		var filePath = Path.Combine(GetWorkspaceRootPath(), "src", "WpfHotReload.Runtime", "WpfHotReload.Runtime.csproj");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("Workspace WpfHotReload.Runtime project not found", filePath);
+		return filePath;
+	}
+
+	public static string GetWorkspaceWpfHotReloadRuntimePath()
+	{
+		var filePath = Path.Combine(GetWorkspaceRootPath(), "src", "WpfHotReload.Runtime", "bin", "Debug", "net10.0-windows", "WpfHotReload.Runtime.dll");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("Workspace WpfHotReload.Runtime assembly not found", filePath);
+		return filePath;
+	}
+
+	public static void EnsureProjectBuilt(string projectPath, ITestOutputHelper testOutputHelper)
+	{
+		var process = new Process
+		{
+			StartInfo = new ProcessStartInfo
+			{
+				FileName = "dotnet",
+				Arguments = $"build \"{projectPath}\" -c Debug -nologo",
+				UseShellExecute = false,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				CreateNoWindow = true,
+				WorkingDirectory = Path.GetDirectoryName(projectPath)
+			}
+		};
+
+		process.OutputDataReceived += (_, args) =>
+		{
+			if (string.IsNullOrWhiteSpace(args.Data) is false)
+			{
+				testOutputHelper.WriteLine(args.Data);
+			}
+		};
+		process.ErrorDataReceived += (_, args) =>
+		{
+			if (string.IsNullOrWhiteSpace(args.Data) is false)
+			{
+				testOutputHelper.WriteLine(args.Data);
+			}
+		};
+
+		if (process.Start() is false)
+		{
+			throw new InvalidOperationException($"Failed to start build for {projectPath}");
+		}
+
+		process.BeginOutputReadLine();
+		process.BeginErrorReadLine();
+		process.WaitForExit();
+
+		if (process.ExitCode != 0)
+		{
+			throw new InvalidOperationException($"dotnet build failed for {projectPath} with exit code {process.ExitCode}");
+		}
 	}
 
 	public static LaunchRequest GetLaunchRequest(bool stopAtEntry = false)
