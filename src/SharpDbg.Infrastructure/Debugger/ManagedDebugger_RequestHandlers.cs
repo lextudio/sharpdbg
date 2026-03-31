@@ -704,20 +704,32 @@ public partial class ManagedDebugger
 		{
 			foreach (var thread in _process.EnumerateThreads())
 			{
-				var activeFrame = thread.ActiveFrame;
-				if (activeFrame is not CorDebugILFrame)
+				var frameIndex = 0;
+				foreach (var frame in thread.ActiveChain.Frames)
 				{
-					continue;
-				}
+					if (frame is not CorDebugILFrame)
+					{
+						frameIndex++;
+						continue;
+					}
 
-				return _variableManager.CreateReference(
-					new VariablesReference(StoredReferenceKind.Scope, null, new ThreadId(thread.Id), new FrameStackDepth(0), null));
+					_logger?.Invoke($"TryGetEvaluationFrameId fallback selected thread {thread.Id} frame {frameIndex}");
+					return _variableManager.CreateReference(
+						new VariablesReference(
+							StoredReferenceKind.Scope,
+							null,
+							new ThreadId(thread.Id),
+							new FrameStackDepth(frameIndex),
+							null));
+				}
 			}
 		}
 		catch (Exception ex)
 		{
 			_logger?.Invoke($"TryGetEvaluationFrameId fallback failed: {ex.Message}");
 		}
+
+		_logger?.Invoke("TryGetEvaluationFrameId could not find any managed IL frame.");
 
 		return null;
 	}
