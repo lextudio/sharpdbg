@@ -706,6 +706,68 @@ public partial class ManagedDebugger
 		}
 	}
 
+	public async Task<(string Result, string? PipeName)> EnsureWpfHotReloadAgent(string helperAssemblyPath)
+	{
+		_logger?.Invoke("EnsureWpfHotReloadAgent");
+
+		var shouldResume = IsRunning;
+		_logger?.Invoke($"EnsureWpfHotReloadAgent state: IsRunning={IsRunning}");
+		if (shouldResume)
+		{
+			_logger?.Invoke("EnsureWpfHotReloadAgent pausing runtime");
+			Pause();
+			await Task.Delay(100);
+		}
+
+		try
+		{
+			var frameId = await WaitForEvaluationFrameId();
+			_logger?.Invoke($"EnsureWpfHotReloadAgent frameId: {frameId?.ToString() ?? "null"}");
+			if (frameId is null)
+			{
+				return ("error: no stack frame available for evaluation", null);
+			}
+
+			var normalizedHelperPath = EscapeForExpression(helperAssemblyPath);
+			var loadExpression = $"System.Reflection.Assembly.LoadFrom(\"{normalizedHelperPath}\").FullName";
+			_logger?.Invoke("EnsureWpfHotReloadAgent evaluating helper load");
+			var (loadResult, _, _) = await Evaluate(loadExpression, frameId.Value);
+			_logger?.Invoke($"EnsureWpfHotReloadAgent load result: {loadResult}");
+			if (loadResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+			{
+				return (loadResult, null);
+			}
+
+			var ensureExpression = "WpfHotReload.Runtime.WpfHotReloadAgent.EnsurePipeListenerStarted()";
+			_logger?.Invoke("EnsureWpfHotReloadAgent evaluating EnsurePipeListenerStarted");
+			var (ensureResult, _, _) = await Evaluate(ensureExpression, frameId.Value);
+			_logger?.Invoke($"EnsureWpfHotReloadAgent ensure result: {ensureResult}");
+			if (ensureResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+			{
+				return (ensureResult, null);
+			}
+
+			var (pipeNameResult, _, _) = await Evaluate(
+				"WpfHotReload.Runtime.WpfHotReloadAgent.PipeName", frameId.Value);
+			if (pipeNameResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+			{
+				return (pipeNameResult, null);
+			}
+
+			var pipeName = pipeNameResult.Trim('"');
+			_logger?.Invoke($"EnsureWpfHotReloadAgent pipeName: {pipeName}");
+			return ("ok: agent ready", pipeName);
+		}
+		finally
+		{
+			if (shouldResume)
+			{
+				_logger?.Invoke("EnsureWpfHotReloadAgent resuming runtime");
+				Continue();
+			}
+		}
+	}
+
 	private async Task<int?> WaitForEvaluationFrameId()
 	{
 		for (var attempt = 0; attempt < 20; attempt++)

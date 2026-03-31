@@ -16,6 +16,7 @@ namespace SharpDbg.Application;
 public class DebugAdapter : DebugAdapterBase
 {
 	private const string WpfHotReloadSourceId = "wpfHotReload";
+	private const int WpfHotReloadBootstrapCode = 1000;
 	private const int WpfHotReloadApplyXamlTextCode = 1001;
 	private readonly ManagedDebugger _debugger;
 	private readonly Action<string>? _logger;
@@ -538,9 +539,39 @@ public class DebugAdapter : DebugAdapterBase
 				_logger?.Invoke($"HandleProtocolRequest vsCustomMessage: source={sourceId}, code={messageCode}");
 
 				if (!string.Equals(sourceId, WpfHotReloadSourceId, StringComparison.Ordinal) ||
-					messageCode != WpfHotReloadApplyXamlTextCode)
+					(messageCode != WpfHotReloadBootstrapCode && messageCode != WpfHotReloadApplyXamlTextCode))
 				{
 					return base.HandleProtocolRequest(requestType, requestArgs);
+				}
+
+				if (messageCode == WpfHotReloadBootstrapCode)
+				{
+					var bootstrapHelperAssemblyPath = message?.Parameter1 as string;
+					if (string.IsNullOrWhiteSpace(bootstrapHelperAssemblyPath))
+					{
+						throw new ProtocolException("Missing helperAssemblyPath");
+					}
+
+					var (bootstrapResult, bootstrapPipeName) = _debugger.EnsureWpfHotReloadAgent(bootstrapHelperAssemblyPath)
+						.GetAwaiter()
+						.GetResult();
+					var bootstrapSuccess = !bootstrapResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase);
+
+					var responseMessage = new VsCustomMessage(WpfHotReloadSourceId, WpfHotReloadBootstrapCode)
+					{
+						Parameter1 = bootstrapSuccess,
+						Parameter2 = bootstrapResult
+					};
+
+					if (!string.IsNullOrWhiteSpace(bootstrapPipeName))
+					{
+						responseMessage.AdditionalProperties["pipeName"] = JToken.FromObject(bootstrapPipeName);
+					}
+
+					return new VsCustomMessageResponse
+					{
+						ResponseMessage = responseMessage
+					};
 				}
 
 				var helperAssemblyPath = message?.Parameter1 as string;
@@ -574,6 +605,29 @@ public class DebugAdapter : DebugAdapterBase
 						Parameter1 = success,
 						Parameter2 = result
 					}
+				};
+			});
+		}
+
+		if (string.Equals(requestType, "wpfHotReload/bootstrap", StringComparison.Ordinal))
+		{
+			return ExecuteWithExceptionHandling(() =>
+			{
+				var helperAssemblyPath = GetRequestValue(requestArgs, "helperAssemblyPath");
+				if (string.IsNullOrWhiteSpace(helperAssemblyPath))
+				{
+					throw new ProtocolException("Missing helperAssemblyPath");
+				}
+
+				var (result, pipeName) = _debugger.EnsureWpfHotReloadAgent(helperAssemblyPath)
+					.GetAwaiter()
+					.GetResult();
+
+				return new WpfHotReloadResponse
+				{
+					Success = !result.StartsWith("error:", StringComparison.OrdinalIgnoreCase),
+					Message = result,
+					PipeName = pipeName,
 				};
 			});
 		}
