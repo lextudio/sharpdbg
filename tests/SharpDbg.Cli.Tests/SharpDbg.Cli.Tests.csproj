@@ -44,6 +44,7 @@
     <ProjectReference Include="..\..\src\SharpDbg.Cli\SharpDbg.Cli.csproj" />
 	  <!-- ensure the project we are debugging is up to date -->
     <ProjectReference Include="..\DebuggableConsoleApp\DebuggableConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\WpfHotReload.RuntimeStub\WpfHotReload.RuntimeStub.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

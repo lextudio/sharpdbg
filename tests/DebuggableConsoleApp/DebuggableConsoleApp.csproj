@@ -7,4 +7,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\WpfHotReload.RuntimeStub\WpfHotReload.RuntimeStub.csproj" />
+  </ItemGroup>
+
 </Project>

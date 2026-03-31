@@ -96,6 +96,13 @@ public static class DebugAdapterProcessHelper
 		return filePath;
 	}
 
+	public static string GetWpfHotReloadRuntimeStubPath()
+	{
+		var filePath = Path.JoinFromGitRoot("artifacts", "bin", "WpfHotReload.RuntimeStub", "debug", "WpfHotReload.RuntimeStub.dll");
+		if (File.Exists(filePath) is false) throw new FileNotFoundException("WpfHotReload.RuntimeStub assembly not found", filePath);
+		return filePath;
+	}
+
 	public static LaunchRequest GetLaunchRequest(bool stopAtEntry = false)
 	{
 		var programPath = GetDebuggableProgramPath();

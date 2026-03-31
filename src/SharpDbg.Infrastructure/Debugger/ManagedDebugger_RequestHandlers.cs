@@ -611,15 +611,18 @@ public partial class ManagedDebugger
 		_logger?.Invoke($"ApplyWpfHotReload: {filePath}");
 
 		var shouldResume = IsRunning;
+		_logger?.Invoke($"ApplyWpfHotReload state: IsRunning={IsRunning}");
 		if (shouldResume)
 		{
+			_logger?.Invoke("ApplyWpfHotReload pausing runtime");
 			Pause();
 			await Task.Delay(100);
 		}
 
 		try
 		{
-			var frameId = TryGetEvaluationFrameId();
+			var frameId = await WaitForEvaluationFrameId();
+			_logger?.Invoke($"ApplyWpfHotReload frameId: {frameId?.ToString() ?? "null"}");
 			if (frameId is null)
 			{
 				return "error: no stack frame available for evaluation";
@@ -627,6 +630,7 @@ public partial class ManagedDebugger
 
 			var normalizedHelperPath = EscapeForExpression(helperAssemblyPath);
 			var loadExpression = $"System.Reflection.Assembly.LoadFrom(\"{normalizedHelperPath}\").FullName";
+			_logger?.Invoke("ApplyWpfHotReload evaluating helper load");
 			var (loadResult, _, _) = await Evaluate(loadExpression, frameId.Value);
 			_logger?.Invoke($"WPF helper load result: {loadResult}");
 
@@ -634,16 +638,35 @@ public partial class ManagedDebugger
 			var base64Text = Convert.ToBase64String(Encoding.UTF8.GetBytes(xamlText));
 			var applyExpression =
 				$"WpfHotReload.Runtime.WpfHotReloadAgent.ApplyXamlTextFromBase64(\"{normalizedFilePath}\", \"{base64Text}\")";
+			_logger?.Invoke("ApplyWpfHotReload evaluating apply call");
 			var (applyResult, _, _) = await Evaluate(applyExpression, frameId.Value);
+			_logger?.Invoke($"ApplyWpfHotReload apply result: {applyResult}");
 			return applyResult;
 		}
 		finally
 		{
 			if (shouldResume)
 			{
+				_logger?.Invoke("ApplyWpfHotReload resuming runtime");
 				Continue();
 			}
 		}
+	}
+
+	private async Task<int?> WaitForEvaluationFrameId()
+	{
+		for (var attempt = 0; attempt < 20; attempt++)
+		{
+			var frameId = TryGetEvaluationFrameId();
+			if (frameId is not null)
+			{
+				return frameId;
+			}
+
+			await Task.Delay(100);
+		}
+
+		return null;
 	}
 
 	private int? TryGetEvaluationFrameId()

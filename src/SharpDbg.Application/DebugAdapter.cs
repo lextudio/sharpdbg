@@ -15,6 +15,8 @@ namespace SharpDbg.Application;
 /// </summary>
 public class DebugAdapter : DebugAdapterBase
 {
+	private const string WpfHotReloadSourceId = "wpfHotReload";
+	private const int WpfHotReloadApplyXamlTextCode = 1001;
 	private readonly ManagedDebugger _debugger;
 	private readonly Action<string>? _logger;
 	private bool _clientLinesStartAt1 = true;
@@ -66,6 +68,27 @@ public class DebugAdapter : DebugAdapterBase
 			jObject.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var token))
 		{
 			return token.Type == JTokenType.Null ? null : token.ToObject<string>();
+		}
+
+		if (requestArgs is not null)
+		{
+			var property = requestArgs.GetType().GetProperties()
+				.FirstOrDefault(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase));
+			if (property?.GetValue(requestArgs) is string stringValue)
+			{
+				return stringValue;
+			}
+		}
+
+		return null;
+	}
+
+	private static string? GetCustomMessageAdditionalString(VsCustomMessage? message, string key)
+	{
+		if (message?.AdditionalProperties is not null &&
+			message.AdditionalProperties.TryGetValue(key, out var valueToken))
+		{
+			return valueToken.Type == JTokenType.Null ? null : valueToken.ToObject<string>();
 		}
 
 		return null;
@@ -503,6 +526,58 @@ public class DebugAdapter : DebugAdapterBase
 
 	protected override ResponseBody HandleProtocolRequest(string requestType, object requestArgs)
 	{
+		_logger?.Invoke($"HandleProtocolRequest: {requestType}");
+		if (string.Equals(requestType, "vsCustomMessage", StringComparison.Ordinal))
+		{
+			return ExecuteWithExceptionHandling(() =>
+			{
+				var typedArguments = requestArgs as VsCustomMessageArguments;
+				var message = typedArguments?.Message;
+				var sourceId = message?.SourceId;
+				var messageCode = message?.MessageCode ?? 0;
+				_logger?.Invoke($"HandleProtocolRequest vsCustomMessage: source={sourceId}, code={messageCode}");
+
+				if (!string.Equals(sourceId, WpfHotReloadSourceId, StringComparison.Ordinal) ||
+					messageCode != WpfHotReloadApplyXamlTextCode)
+				{
+					return base.HandleProtocolRequest(requestType, requestArgs);
+				}
+
+				var helperAssemblyPath = message?.Parameter1 as string;
+				var filePath = message?.Parameter2 as string;
+				var xamlText = GetCustomMessageAdditionalString(message, "xamlText");
+
+				if (string.IsNullOrWhiteSpace(helperAssemblyPath))
+				{
+					throw new ProtocolException("Missing helperAssemblyPath");
+				}
+
+				if (string.IsNullOrWhiteSpace(filePath))
+				{
+					throw new ProtocolException("Missing filePath");
+				}
+
+				if (xamlText is null)
+				{
+					throw new ProtocolException("Missing xamlText");
+				}
+
+				var result = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
+					.GetAwaiter()
+					.GetResult();
+				var success = !result.StartsWith("error:", StringComparison.OrdinalIgnoreCase);
+
+				return new VsCustomMessageResponse
+				{
+					ResponseMessage = new VsCustomMessage(WpfHotReloadSourceId, WpfHotReloadApplyXamlTextCode)
+					{
+						Parameter1 = success,
+						Parameter2 = result
+					}
+				};
+			});
+		}
+
 		if (!string.Equals(requestType, "wpfHotReload/applyXamlText", StringComparison.Ordinal))
 		{
 			return base.HandleProtocolRequest(requestType, requestArgs);
@@ -513,6 +588,7 @@ public class DebugAdapter : DebugAdapterBase
 			var helperAssemblyPath = GetRequestValue(requestArgs, "helperAssemblyPath");
 			var filePath = GetRequestValue(requestArgs, "filePath");
 			var xamlText = GetRequestValue(requestArgs, "xamlText");
+			_logger?.Invoke($"HandleProtocolRequest args resolved: helper={helperAssemblyPath is not null}, file={filePath}, xamlLength={xamlText?.Length ?? -1}");
 
 			if (string.IsNullOrWhiteSpace(helperAssemblyPath))
 			{
@@ -532,6 +608,7 @@ public class DebugAdapter : DebugAdapterBase
 			var result = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
 				.GetAwaiter()
 				.GetResult();
+			_logger?.Invoke($"HandleProtocolRequest result: {result}");
 
 			return new WpfHotReloadResponse
 			{

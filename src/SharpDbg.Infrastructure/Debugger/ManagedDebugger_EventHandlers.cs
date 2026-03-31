@@ -14,14 +14,6 @@ public partial class ManagedDebugger
 		var corThread = _rawProcess.EnumerateThreads().FirstOrDefault();
 		if (corThread != null) _threads.TryAdd(corThread.Id, corThread);
 
-		if (_stopAtEntryActive && !_stopAtEntrySignaled && corThread != null)
-		{
-			_stopAtEntrySignaled = true;
-			IsRunning = false;
-			OnStopped?.Invoke(corThread.Id, "entry");
-			return;
-		}
-
 		ContinueProcess();
 	}
 

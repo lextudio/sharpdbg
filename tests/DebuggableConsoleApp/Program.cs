@@ -1,5 +1,6 @@
 ﻿
 using DebuggableConsoleApp.Lambdas;
+using WpfHotReload.Runtime;
 
 namespace DebuggableConsoleApp;
 
@@ -7,6 +8,7 @@ public static class Program
 {
 	public static void Main(string[] args)
 	{
+		_ = typeof(WpfHotReloadAgent);
 		Console.WriteLine("DebuggableConsoleApp is running");
 		Console.WriteLine("Log2");
 		var myLambdaClass = new MyLambdaClass();
