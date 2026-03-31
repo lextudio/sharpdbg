@@ -18,6 +18,7 @@ public partial class ManagedDebugger
 	private string? _pendingLaunchProgram;
 	private string[]? _pendingLaunchArgs;
 	private string? _pendingLaunchWorkingDirectory;
+	private Dictionary<string, string>? _pendingLaunchEnv;
 	private bool _pendingLaunchStopAtEntry;
 
 	/// <summary>
@@ -32,6 +33,7 @@ public partial class ManagedDebugger
 		_pendingLaunchProgram = program;
 		_pendingLaunchArgs = args;
 		_pendingLaunchWorkingDirectory = workingDirectory;
+		_pendingLaunchEnv = env;
 		_pendingLaunchStopAtEntry = stopAtEntry;
 	}
 
@@ -49,12 +51,14 @@ public partial class ManagedDebugger
 		var program = _pendingLaunchProgram;
 		var args = _pendingLaunchArgs ?? Array.Empty<string>();
 		var workingDirectory = _pendingLaunchWorkingDirectory;
+		var env = _pendingLaunchEnv;
 		var stopAtEntry = _pendingLaunchStopAtEntry;
 
 		// Clear pending launch
 		_pendingLaunchProgram = null;
 		_pendingLaunchArgs = null;
 		_pendingLaunchWorkingDirectory = null;
+		_pendingLaunchEnv = null;
 		_stopAtEntryActive = stopAtEntry;
 		_stopAtEntrySignaled = false;
 
@@ -72,12 +76,32 @@ public partial class ManagedDebugger
 		var dbgShimPath = DbgShimResolver.Resolve();
 		var dbgshim = new DbgShim(NativeLibrary.Load(dbgShimPath));
 
+		// Set environment variables on the adapter process so the child
+		// inherits them (lpEnvironment=Zero means inherit parent env).
+		if (env is { Count: > 0 })
+		{
+			foreach (var kvp in env)
+			{
+				_logger?.Invoke($"Setting env: {kvp.Key}={kvp.Value}");
+				Environment.SetEnvironmentVariable(kvp.Key, kvp.Value);
+			}
+		}
+
 		// Create process suspended
 		var result = dbgshim.CreateProcessForLaunch(
 			commandLine.ToString(),
 			bSuspendProcess: true,
-			lpEnvironment: IntPtr.Zero, // TODO: support environment variables
+			lpEnvironment: IntPtr.Zero,
 			lpCurrentDirectory: workingDirectory);
+
+		// Clean up: remove the env vars from the adapter process
+		if (env is { Count: > 0 })
+		{
+			foreach (var kvp in env)
+			{
+				Environment.SetEnvironmentVariable(kvp.Key, null);
+			}
+		}
 
 		var processId = result.ProcessId;
 		var resumeHandle = result.ResumeHandle;
@@ -606,7 +630,7 @@ public partial class ManagedDebugger
 		return (value, friendlyTypeName, 0);
 	}
 
-	public async Task<string> ApplyWpfHotReload(string helperAssemblyPath, string filePath, string xamlText)
+	public async Task<(string Result, string? PipeName)> ApplyWpfHotReload(string helperAssemblyPath, string filePath, string xamlText)
 	{
 		_logger?.Invoke($"ApplyWpfHotReload: {filePath}");
 
@@ -625,7 +649,7 @@ public partial class ManagedDebugger
 			_logger?.Invoke($"ApplyWpfHotReload frameId: {frameId?.ToString() ?? "null"}");
 			if (frameId is null)
 			{
-				return "error: no stack frame available for evaluation";
+				return ("error: no stack frame available for evaluation", null);
 			}
 
 			var normalizedHelperPath = EscapeForExpression(helperAssemblyPath);
@@ -654,7 +678,23 @@ public partial class ManagedDebugger
 				applyResult = fallbackResult;
 			}
 			_logger?.Invoke($"ApplyWpfHotReload apply result: {applyResult}");
-			return applyResult;
+
+			// Read the pipe name that the helper's static constructor set up.
+			// This eval is cheap (just reads a static property) and tells the
+			// extension where to send subsequent requests directly.
+			string? pipeName = null;
+			if (!applyResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+			{
+				var (pipeNameResult, _, _) = await Evaluate(
+					"WpfHotReload.Runtime.WpfHotReloadAgent.PipeName", frameId.Value);
+				if (!pipeNameResult.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+				{
+					pipeName = pipeNameResult.Trim('"');
+					_logger?.Invoke($"ApplyWpfHotReload pipeName: {pipeName}");
+				}
+			}
+
+			return (applyResult, pipeName);
 		}
 		finally
 		{

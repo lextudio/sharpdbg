@@ -562,7 +562,7 @@ public class DebugAdapter : DebugAdapterBase
 					throw new ProtocolException("Missing xamlText");
 				}
 
-				var result = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
+				var (result, pipeName) = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
 					.GetAwaiter()
 					.GetResult();
 				var success = !result.StartsWith("error:", StringComparison.OrdinalIgnoreCase);
@@ -605,15 +605,16 @@ public class DebugAdapter : DebugAdapterBase
 				throw new ProtocolException("Missing xamlText");
 			}
 
-			var result = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
+			var (result, pipeName) = _debugger.ApplyWpfHotReload(helperAssemblyPath, filePath, xamlText)
 				.GetAwaiter()
 				.GetResult();
-			_logger?.Invoke($"HandleProtocolRequest result: {result}");
+			_logger?.Invoke($"HandleProtocolRequest result: {result}, pipeName: {pipeName}");
 
 			return new WpfHotReloadResponse
 			{
 				Success = !result.StartsWith("error:", StringComparison.OrdinalIgnoreCase),
 				Message = result,
+				PipeName = pipeName,
 			};
 		});
 	}
@@ -662,4 +663,6 @@ internal sealed class WpfHotReloadResponse : ResponseBody
 	public bool Success { get; set; }
 
 	public string Message { get; set; } = string.Empty;
+
+	public string? PipeName { get; set; }
 }
