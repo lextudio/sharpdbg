@@ -695,6 +695,30 @@ public partial class ManagedDebugger
 			}
 		}
 
+		if (_process is null)
+		{
+			return null;
+		}
+
+		try
+		{
+			foreach (var thread in _process.EnumerateThreads())
+			{
+				var activeFrame = thread.ActiveFrame;
+				if (activeFrame is not CorDebugILFrame)
+				{
+					continue;
+				}
+
+				return _variableManager.CreateReference(
+					new VariablesReference(StoredReferenceKind.Scope, null, new ThreadId(thread.Id), new FrameStackDepth(0), null));
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"TryGetEvaluationFrameId fallback failed: {ex.Message}");
+		}
+
 		return null;
 	}
 
