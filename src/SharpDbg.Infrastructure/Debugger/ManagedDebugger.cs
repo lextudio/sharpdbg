@@ -24,6 +24,9 @@ public partial class ManagedDebugger : IDisposable
 	private int? _pendingAttachProcessId;
 	private AsyncStepper? _asyncStepper;
 	private CompiledExpressionInterpreter? _expressionInterpreter;
+	private string? _launchTargetPath;
+	private CorDebugFunctionBreakpoint? _stopAtEntryBreakpoint;
+	private bool _stopAtEntryPending;
 
 	public event Action<int, string>? OnStopped;
 	// ThreadId, FilePath, Line, Reason
@@ -197,7 +200,8 @@ public partial class ManagedDebugger : IDisposable
 
 			// Create a breakpoint at the resolved IL offset
 			var corBreakpoint = ilCode.CreateBreakpoint(resolved.ILOffset);
-			corBreakpoint.Activate(true);
+			var activateBreakpoint = !_stopAtEntryPending;
+			corBreakpoint.Activate(activateBreakpoint);
 
 			// Update breakpoint info
 			bp.CorBreakpoint = corBreakpoint;
@@ -209,7 +213,7 @@ public partial class ManagedDebugger : IDisposable
 			bp.ModuleBaseAddress = targetModule.BaseAddress;
 			bp.Message = null;
 
-			_logger?.Invoke($"Breakpoint bound at {bp.FilePath}:{bp.Line} -> resolved to line {resolved.StartLine}, IL offset {resolved.ILOffset} in method 0x{resolved.MethodToken:X}");
+			_logger?.Invoke($"Breakpoint bound at {bp.FilePath}:{bp.Line} -> resolved to line {resolved.StartLine}, IL offset {resolved.ILOffset} in method 0x{resolved.MethodToken:X}{(activateBreakpoint ? string.Empty : " (inactive until stopAtEntry completes)")}");
 			return true;
 		}
 		catch (Exception ex)
@@ -263,6 +267,34 @@ public partial class ManagedDebugger : IDisposable
 
 		_isAttached = false;
 		IsRunning = false;
+	}
+
+	private void ActivateUserBreakpoints(bool active)
+	{
+		foreach (var breakpoint in _breakpointManager.GetAllBreakpoints())
+		{
+			if (breakpoint.CorBreakpoint == null)
+			{
+				continue;
+			}
+
+			try
+			{
+				breakpoint.CorBreakpoint.Activate(active);
+			}
+			catch (Exception ex)
+			{
+				_logger?.Invoke($"Error {(active ? "activating" : "deactivating")} breakpoint {breakpoint.FilePath}:{breakpoint.Line}: {ex.Message}");
+			}
+		}
+	}
+
+	private void CompleteStopAtEntry(CorDebugThread thread, string sourceFilePath, int line)
+	{
+		_stopAtEntryPending = false;
+		ActivateUserBreakpoints(true);
+		_logger?.Invoke($"stopAtEntry satisfied at {sourceFilePath}:{line}");
+		OnStopped2?.Invoke(thread.Id, sourceFilePath, line, "entry");
 	}
 
 	private static string GetFunctionFormattedName(CorDebugFunction function)

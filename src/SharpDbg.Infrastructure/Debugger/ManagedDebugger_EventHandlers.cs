@@ -1,6 +1,7 @@
-﻿using ClrDebug;
+using ClrDebug;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Interpreter;
+using System.Reflection.PortableExecutable;
 
 namespace SharpDbg.Infrastructure.Debugger;
 
@@ -16,15 +17,15 @@ public partial class ManagedDebugger
 
 	private void HandleProcessExited(object? sender, ExitProcessCorDebugManagedCallbackEventArgs exitProcessCorDebugManagedCallbackEventArgs)
 	{
-		_logger?.Invoke($"Process exited");
+		_logger?.Invoke("Process exited");
 		IsRunning = false;
 		OnExited?.Invoke();
 		OnTerminated?.Invoke();
 	}
 
-	private void HandleThreadCreated(object? sender, CreateThreadCorDebugManagedCallbackEventArgs createThreadCorDebugManagedCallbackEventArgs)
+	private void HandleThreadCreated(object? sender, CreateThreadCorDebugManagedCallbackEventArgs createProcessCorDebugManagedCallbackEventArgs)
 	{
-		var corThread = createThreadCorDebugManagedCallbackEventArgs.Thread;
+		var corThread = createProcessCorDebugManagedCallbackEventArgs.Thread;
 		_threads[corThread.Id] = corThread;
 		OnThreadStarted?.Invoke(corThread.Id, $"Thread {corThread.Id}");
 		ContinueProcess();
@@ -43,11 +44,10 @@ public partial class ManagedDebugger
 		var corModule = loadModuleCorDebugManagedCallbackEventArgs.Module;
 		var modulePath = corModule.Name;
 		var moduleName = Path.GetFileName(modulePath);
-		var baseAddress = (long) corModule.BaseAddress;
+		var baseAddress = (long)corModule.BaseAddress;
 
 		_logger?.Invoke($"Module loaded: {modulePath} at 0x{baseAddress:X}");
 
-		// Try to load symbols for this module
 		SymbolReader? symbolReader = null;
 		try
 		{
@@ -66,26 +66,26 @@ public partial class ManagedDebugger
 			_logger?.Invoke($"  Error loading symbols for {moduleName}: {ex.Message}");
 		}
 
-		// Store module info
 		var moduleInfo = new ModuleInfo(corModule, modulePath, symbolReader);
 		_modules[baseAddress] = moduleInfo;
 
 		if (moduleName is "System.Private.CoreLib.dll")
 		{
-			// we need to map value classes to primitive types to allow evaluation to invoke methods on them
 			MapRuntimePrimitiveTypesToCorDebugClass(corModule);
-			// We can now initialize the expression interpreter, and assume that modules will be loaded before any stop event is allowed to be returned
 			var runtimeAssemblyPrimitiveTypeClasses = new RuntimeAssemblyPrimitiveTypeClasses(CorElementToValueClassMap, CorVoidClass, CorDecimalClass);
 			_expressionInterpreter = new CompiledExpressionInterpreter(runtimeAssemblyPrimitiveTypeClasses, _callbacks, this);
 		}
 
-		// Fire the module loaded event
 		OnModuleLoaded?.Invoke(modulePath, Path.GetFileName(modulePath), modulePath);
 
-		// Try to bind any pending breakpoints now that we have a new module with symbols
 		if (symbolReader != null)
 		{
 			TryBindPendingBreakpoints();
+		}
+
+		if (_stopAtEntryPending && _stopAtEntryBreakpoint == null && IsLaunchTargetModule(modulePath))
+		{
+			TryArmStopAtEntryBreakpoint(moduleInfo);
 		}
 
 		ContinueProcess();
@@ -95,7 +95,6 @@ public partial class ManagedDebugger
 	{
 		try
 		{
-			//System.Diagnostics.Debugger.Launch();
 			var breakpoint = breakpointCorDebugManagedCallbackEventArgs.Breakpoint;
 			ArgumentNullException.ThrowIfNull(breakpoint);
 
@@ -108,13 +107,41 @@ public partial class ManagedDebugger
 			if (breakpoint is not CorDebugFunctionBreakpoint functionBreakpoint)
 			{
 				_logger?.Invoke("Unknown breakpoint type hit");
-				ContinueProcess(); // may be incorrect
+				ContinueProcess();
 				return;
 			}
 
 			var corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
 
-			// Check if async stepper handles this breakpoint
+			if (_stopAtEntryBreakpoint != null && breakpoint.Raw == _stopAtEntryBreakpoint.Raw)
+			{
+				_stopAtEntryBreakpoint.Activate(false);
+				_stopAtEntryBreakpoint = null;
+				IsRunning = false;
+
+				var sourceInfoAtEntry = GetSourceInfoAtFrame(corThread.ActiveFrame);
+				if (sourceInfoAtEntry is not null)
+				{
+					var (sourceFilePath, line, _) = sourceInfoAtEntry.Value;
+					CompleteStopAtEntry(corThread, sourceFilePath, line);
+					return;
+				}
+
+				try
+				{
+					SetupStepper(corThread, AsyncStepper.StepType.StepIn);
+					_logger?.Invoke($"stopAtEntry hit managed entry point; stepping to first user source on thread {corThread.Id}");
+					Continue();
+					return;
+				}
+				catch (Exception ex)
+				{
+					_stopAtEntryPending = false;
+					ActivateUserBreakpoints(true);
+					_logger?.Invoke($"stopAtEntry could not step from managed entry point: {ex.Message}");
+				}
+			}
+
 			if (_asyncStepper != null)
 			{
 				var (asyncHandled, shouldStop) = await _asyncStepper.TryHandleBreakpoint(corThread, functionBreakpoint);
@@ -146,11 +173,19 @@ public partial class ManagedDebugger
 			var managedBreakpoint = _breakpointManager.FindByCorBreakpoint(functionBreakpoint.Raw);
 			ArgumentNullException.ThrowIfNull(managedBreakpoint);
 			IsRunning = false;
+
+			if (_stopAtEntryPending)
+			{
+				_logger?.Invoke($"Ignoring user breakpoint at {managedBreakpoint.FilePath}:{managedBreakpoint.Line} until stopAtEntry completes");
+				Continue();
+				return;
+			}
+
 			OnStopped2?.Invoke(corThread.Id, managedBreakpoint.FilePath, managedBreakpoint.Line, "breakpoint");
 		}
-		catch (Exception e)
+		catch
 		{
-			throw; // TODO handle exception
+			throw;
 		}
 	}
 
@@ -158,19 +193,14 @@ public partial class ManagedDebugger
 	{
 		var corThread = stepCompleteEventArgs.Thread;
 		IsRunning = false;
-		var ilFrame = (CorDebugILFrame) corThread.ActiveFrame;
-		// If we have an active async stepper, it means we would have a breakpoint set up for either yield or resume for the next await statement
-		// We would then have done a regular step over/in/out to get to that breakpoint
-		// Since the step has completed, it means we did not hit the breakpoint, so we can clear the active async step
+		var ilFrame = (CorDebugILFrame)corThread.ActiveFrame;
 		_asyncStepper?.ClearActiveAsyncStep();
 		var stepper = _stepper ?? throw new InvalidOperationException("No stepper found for step complete");
-		stepper.Deactivate(); // I really don't know if its necessary to deactivate the steppers once done
+		stepper.Deactivate();
 		_stepper = null;
 		var symbolReader = _modules[ilFrame.Function.Module.BaseAddress].SymbolReader;
 		if (symbolReader is null)
 		{
-			// We don't have symbols, but we're going to step in, in case this code calls user code that would be missed if we stepped out or over
-			// Alternative is to use JMC true - we'll never stop in non-user code, so in theory symbolReader would never be null
 			SetupStepper(corThread, AsyncStepper.StepType.StepIn);
 			Continue();
 			return;
@@ -186,11 +216,9 @@ public partial class ManagedDebugger
 
 		if (nextUserCodeIlOffset is null)
 		{
-			// Check attributes
 			var metadataImport = ilFrame.Function.Module.GetMetaDataInterface().MetaDataImport;
 			var mdMethodDef = ilFrame.Function.Token;
-			var methodIsNotDebuggable =
-				metadataImport.HasAnyAttribute(mdMethodDef, JmcConstants.JmcMethodAttributeNames);
+			var methodIsNotDebuggable = metadataImport.HasAnyAttribute(mdMethodDef, JmcConstants.JmcMethodAttributeNames);
 			if (methodIsNotDebuggable)
 			{
 				SetupStepper(corThread, AsyncStepper.StepType.StepIn);
@@ -199,25 +227,25 @@ public partial class ManagedDebugger
 			}
 		}
 
-		var sourceInfo = GetSourceInfoAtFrame(ilFrame);
-		if (sourceInfo is null)
+		var sourceInfoAtStep = GetSourceInfoAtFrame(ilFrame);
+		if (sourceInfoAtStep is null)
 		{
-			// sourceInfo will be null if we could not find a PDB for the module
-			// Bottom line - if we have no PDB, we have no source info, and there is no possible way for the user to map the stop location to a source file/line
-			// (Until we implement Source Link and/or Decompilation support)
-			// So for now, if this occurs, we are going to do a step out to get us back to a stop location with source info
-			// TODO: This should probably be more sophisticated - mark the CorDebugFunction as non user code - `JMCStatus = false`, enable JMC for the stepper and then step over, in case the non user code calls user code, e.g. LINQ methods
 			SetupStepper(corThread, AsyncStepper.StepType.StepOver);
 			Continue();
 			return;
 		}
 
-		var (sourceFilePath, line, _) = sourceInfo.Value;
-		OnStopped2?.Invoke(corThread.Id, sourceFilePath, line, "step");
+		var (sourceFilePathAtStep, lineAtStep, _) = sourceInfoAtStep.Value;
+		if (_stopAtEntryPending)
+		{
+			CompleteStopAtEntry(corThread, sourceFilePathAtStep, lineAtStep);
+			return;
+		}
+
+		OnStopped2?.Invoke(corThread.Id, sourceFilePathAtStep, lineAtStep, "step");
 	}
 
-	private void HandleBreak(object? sender,
-		BreakCorDebugManagedCallbackEventArgs breakCorDebugManagedCallbackEventArgs)
+	private void HandleBreak(object? sender, BreakCorDebugManagedCallbackEventArgs breakCorDebugManagedCallbackEventArgs)
 	{
 		var corThread = breakCorDebugManagedCallbackEventArgs.Thread;
 		IsRunning = false;
@@ -243,5 +271,45 @@ public partial class ManagedDebugger
 		}
 
 		OnStopped?.Invoke(corThread.Id, "exception");
+	}
+
+	private void TryArmStopAtEntryBreakpoint(ModuleInfo moduleInfo)
+	{
+		if (!_stopAtEntryPending || _stopAtEntryBreakpoint != null)
+		{
+			return;
+		}
+
+		try
+		{
+			using var stream = File.OpenRead(moduleInfo.ModulePath);
+			using var peReader = new PEReader(stream);
+			var corHeader = peReader.PEHeaders.CorHeader;
+			if (corHeader == null || corHeader.EntryPointTokenOrRelativeVirtualAddress == 0)
+			{
+				_logger?.Invoke($"No managed entry point found for {moduleInfo.ModulePath}");
+				return;
+			}
+
+			var function = moduleInfo.Module.GetFunctionFromToken(corHeader.EntryPointTokenOrRelativeVirtualAddress);
+			var breakpoint = function.ILCode.CreateBreakpoint(0);
+			breakpoint.Activate(true);
+			_stopAtEntryBreakpoint = breakpoint;
+			_logger?.Invoke($"Armed stopAtEntry breakpoint in {moduleInfo.ModuleName} at token 0x{corHeader.EntryPointTokenOrRelativeVirtualAddress:X}");
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"Could not arm stopAtEntry breakpoint for {moduleInfo.ModulePath}: {ex.Message}");
+		}
+	}
+
+	private bool IsLaunchTargetModule(string modulePath)
+	{
+		if (string.IsNullOrEmpty(_launchTargetPath))
+		{
+			return false;
+		}
+
+		return string.Equals(Path.GetFullPath(modulePath), Path.GetFullPath(_launchTargetPath), StringComparison.OrdinalIgnoreCase);
 	}
 }
