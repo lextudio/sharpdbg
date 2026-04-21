@@ -230,7 +230,8 @@ public class AsyncStepper
 				if (stepType == StepType.StepOut)
 				{
 					// For step-out in async method with await, check if we need NotifyDebuggerOfWaitCompletion
-					var builder = GetAsyncBuilder(frame as CorDebugILFrame);
+					var builderFrame = frame as CorDebugILFrame;
+					var builder = builderFrame is null ? null : GetAsyncBuilder(builderFrame);
 					if (builder != null)
 					{
 						// Check if builder is AsyncVoidMethodBuilder
@@ -301,7 +302,6 @@ public class AsyncStepper
 		catch (Exception)
 		{
 			// If anything goes wrong, fall back to simple stepper, TODO remove this
-			throw;
 			return (false, null);
 		}
 	}

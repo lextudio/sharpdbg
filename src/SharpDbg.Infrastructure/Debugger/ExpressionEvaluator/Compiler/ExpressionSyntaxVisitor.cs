@@ -82,7 +82,7 @@ public class ExpressionSyntaxVisitor(List<CommandBase> commands, bool isDebugger
 				case SyntaxKind.IdentifierName:
 				case SyntaxKind.StringLiteralExpression:
 				case SyntaxKind.InterpolatedStringText:
-					_commands.Add(new OneOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), node.GetFirstToken().Value));
+					_commands.Add(new OneOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), node.GetFirstToken().Value!));
 					break;
 
 				case SyntaxKind.InterpolatedStringExpression:
@@ -131,7 +131,7 @@ public class ExpressionSyntaxVisitor(List<CommandBase> commands, bool isDebugger
 					{
 						throw new ArgumentOutOfRangeException(nodeSyntaxKind + " must have at least one type!");
 					}
-					_commands.Add(new TwoOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), node.GetFirstToken().Value, GenericNameArgs));
+					_commands.Add(new TwoOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), node.GetFirstToken().Value!, GenericNameArgs));
 					break;
 
 				case SyntaxKind.InvocationExpression:
@@ -194,7 +194,7 @@ public class ExpressionSyntaxVisitor(List<CommandBase> commands, bool isDebugger
 
 				case SyntaxKind.NumericLiteralExpression:
 				case SyntaxKind.CharacterLiteralExpression: // 1 wchar
-					_commands.Add(new TwoOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), TypeAlias[node.GetFirstToken().Value.GetType()], node.GetFirstToken().Value));
+					_commands.Add(new TwoOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), TypeAlias[node.GetFirstToken().Value!.GetType()], node.GetFirstToken().Value!));
 					break;
 
 				case SyntaxKind.PredefinedType:

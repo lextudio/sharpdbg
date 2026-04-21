@@ -204,8 +204,7 @@ public class DebugAdapter : DebugAdapterBase, IDisposable
 
 	protected override LaunchResponse HandleLaunchRequest(LaunchArguments arguments)
 	{
-		var program = GetConfigValue<string>(arguments.ConfigurationProperties, "program");
-		if (string.IsNullOrEmpty(program))
+		if (GetConfigValue<string>(arguments.ConfigurationProperties, "program") is not { Length: > 0 } program)
 		{
 			throw new ProtocolException("Missing program path");
 		}
