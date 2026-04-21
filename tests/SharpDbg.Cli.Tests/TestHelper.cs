@@ -45,16 +45,16 @@ public static partial class TestHelper
 		return debugProtocolHost;
 	}
 
-	public static DebugProtocolHost WithAttachRequest(this DebugProtocolHost debugProtocolHost, int debuggableProcessId, bool justMyCode = true, bool stopAtEntry = false)
+	public static DebugProtocolHost WithAttachRequest(this DebugProtocolHost debugProtocolHost, int debuggableProcessId, bool justMyCode = true, bool stopAtEntry = false, string? runtimeFlavor = null)
 	{
-		var attachRequest = DebugAdapterProcessHelper.GetAttachRequest(debuggableProcessId, justMyCode, stopAtEntry);
+		var attachRequest = DebugAdapterProcessHelper.GetAttachRequest(debuggableProcessId, justMyCode, stopAtEntry, runtimeFlavor);
 		debugProtocolHost.SendRequestSync(attachRequest);
 		return debugProtocolHost;
 	}
 
-	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, string[] args, bool stopAtEntry = false)
+	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, string[] args, bool stopAtEntry = false, string? runtimeFlavor = null)
 	{
-		var launchRequest = DebugAdapterProcessHelper.GetLaunchRequest(program, args, stopAtEntry);
+		var launchRequest = DebugAdapterProcessHelper.GetLaunchRequest(program, args, stopAtEntry, runtimeFlavor);
 		debugProtocolHost.SendRequestSync(launchRequest);
 		return debugProtocolHost;
 	}

@@ -40,6 +40,7 @@ public class OopOrInProcDebugAdapter : IDisposable
 	public void Dispose()
 	{
 		_debugAdapter?.Protocol.Stop();
+		_debugAdapter?.Dispose();
 		if (_process is not null)
 		{
 			if (_process.HasExited is false)

@@ -13,7 +13,7 @@ namespace SharpDbg.Application;
 /// <summary>
 /// Main debug adapter that coordinates DAP protocol and debugger engine
 /// </summary>
-public class DebugAdapter : DebugAdapterBase
+public class DebugAdapter : DebugAdapterBase, IDisposable
 {
 	private readonly ManagedDebugger _debugger;
 	private readonly Action<string>? _logger;
@@ -33,6 +33,8 @@ public class DebugAdapter : DebugAdapterBase
 	{
 		InitializeProtocolClient(input, output);
 	}
+
+	public void Dispose() => _debugger.Dispose();
 
 	private static T ExecuteWithExceptionHandling<T>(Func<T> func)
 	{
@@ -74,6 +76,7 @@ public class DebugAdapter : DebugAdapterBase
 
 		_debugger.OnStopped2 += (threadId, filePath, line, column, reason, decompiledSourceInfo) =>
 		{
+			_logger?.Invoke($"Sending DAP stopped event: reason={reason}, threadId={threadId}, source={filePath}, line={line}");
 			var source = new Source { Path = filePath };
 			var stoppedEvent = new StoppedEvent
 			{
@@ -210,11 +213,12 @@ public class DebugAdapter : DebugAdapterBase
 		var args = GetConfigValue<string[]>(arguments.ConfigurationProperties, "args") ?? Array.Empty<string>();
 		var cwd = GetConfigValue<string>(arguments.ConfigurationProperties, "cwd");
 		var env = GetConfigValue<Dictionary<string, string>>(arguments.ConfigurationProperties, "env");
+		var runtimeFlavor = GetConfigValue<string>(arguments.ConfigurationProperties, "runtimeFlavor") ?? "auto";
 		var stopAtEntry = GetConfigValue<bool?>(arguments.ConfigurationProperties, "stopAtEntry") ?? false;
 
 		try
 		{
-			_debugger.Launch(program, args, cwd, env, stopAtEntry);
+			_debugger.Launch(program, args, cwd, env, stopAtEntry, runtimeFlavor);
 			return new LaunchResponse();
 		}
 		catch (Exception ex)
@@ -232,9 +236,10 @@ public class DebugAdapter : DebugAdapterBase
 			throw new ProtocolException("Missing process ID");
 		}
 		var justMyCode = GetConfigValue<bool?>(arguments.ConfigurationProperties, "justMyCode") ?? true;
+		var runtimeFlavor = GetConfigValue<string>(arguments.ConfigurationProperties, "runtimeFlavor") ?? "auto";
 		try
 		{
-			_debugger.Attach(processId.Value, justMyCode);
+			_debugger.Attach(processId.Value, justMyCode, runtimeFlavor);
 			return new AttachResponse();
 		}
 		catch (Exception ex)

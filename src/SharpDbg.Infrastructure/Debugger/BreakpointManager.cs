@@ -10,7 +10,11 @@ public class BreakpointManager
 	private int _nextBreakpointId = 1;
 	private readonly Dictionary<int, BreakpointInfo> _breakpoints = new();
 	private readonly Dictionary<string, List<int>> _breakpointsByFile = new();
-	private readonly Lock _lock = new();
+#if NET10_0_OR_GREATER
+	private readonly System.Threading.Lock _lock = new();
+#else
+	private readonly object _lock = new();
+#endif
 
 	public class BreakpointInfo
 	{
@@ -121,6 +125,17 @@ public class BreakpointManager
 		lock (_lock)
 		{
 			return _breakpoints.Values.FirstOrDefault(bp => bp.CorBreakpoint?.Raw == corBreakpoint);
+		}
+	}
+
+	public BreakpointInfo? FindByBinding(long moduleBaseAddress, int methodToken, int ilOffset)
+	{
+		lock (_lock)
+		{
+			return _breakpoints.Values.FirstOrDefault(bp =>
+				bp.ModuleBaseAddress == moduleBaseAddress &&
+				bp.MethodToken == methodToken &&
+				bp.ILOffset == ilOffset);
 		}
 	}
 

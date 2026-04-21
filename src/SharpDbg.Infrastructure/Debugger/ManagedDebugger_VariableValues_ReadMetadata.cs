@@ -14,8 +14,7 @@ public partial class ManagedDebugger
 		// 2 bytes prolog
 		// 4 bytes data
 		// 2 bytes alignment
-		var byteSpan = byteArray.AsSpan()[2..^2];
-		var dataAsInt = BitConverter.ToInt32(byteSpan);
+		var dataAsInt = BitConverter.ToInt32(byteArray, 2);
 		return dataAsInt;
 	}
 

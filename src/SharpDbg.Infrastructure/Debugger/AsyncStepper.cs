@@ -148,7 +148,7 @@ public class AsyncStepper
 			var classDef = metadataImport.FindTypeDefByNameOrNull(className, mdToken.Nil);
 			if (classDef is null) return false;
 
-			var methodDef = metadataImport.FindMethod(classDef.Value, methodName, 0, 0);
+			var methodDef = metadataImport.FindMethod(classDef.Value, methodName, IntPtr.Zero, 0);
 			if (methodDef.IsNil) return false;
 
 			var function = targetModule.GetFunctionFromToken(methodDef);

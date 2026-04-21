@@ -34,17 +34,23 @@ public partial class ManagedDebugger
 			var module = corDebugValue.ExactType.Class.Module;
 			var metadataImport = module.GetMetaDataInterface().MetaDataImport;
 			var debugProxyCorDebugTypeDef = metadataImport.FindMaybeNestedTypeDefByNameOrNull(debuggerProxyTypeName);
-			ArgumentNullException.ThrowIfNull(debugProxyCorDebugTypeDef);
+			if (debugProxyCorDebugTypeDef is null)
+			{
+				throw new ArgumentNullException(nameof(debugProxyCorDebugTypeDef));
+			}
 			var debugProxyCorDebugClass = module.GetClassFromToken(debugProxyCorDebugTypeDef.Value);
 
 			// TODO: pass a specific signature to handle proxy types that have multiple constructors - see CompiledExpressionInterpreter.FindMethodOnType
-			var debugProxyTypeConstructorMethodDef = metadataImport.FindMethod(debugProxyCorDebugClass.Token, ".ctor", 0, 0);
+			var debugProxyTypeConstructorMethodDef = metadataImport.FindMethod(debugProxyCorDebugClass.Token, ".ctor", IntPtr.Zero, 0);
 			//var debugProxyTypeCtorMethodProps = metadataImport.GetMethodProps(debugProxyTypeConstructorMethodDef);
 			var corDebugFunction = module.GetFunctionFromToken(debugProxyTypeConstructorMethodDef);
 			ICorDebugValue[] evalArgs = [corDebugValue.Raw];
 			var typeParameterArgs = corDebugValue.ExactType.TypeParameters.Select(t => t.Raw).ToArray();
 			proxyInstance = await eval.NewParameterizedObjectAsync(_callbacks ,corDebugFunction, typeParameterArgs.Length, typeParameterArgs, evalArgs.Length, evalArgs);
-			ArgumentNullException.ThrowIfNull(proxyInstance);
+			if (proxyInstance is null)
+			{
+				throw new ArgumentNullException(nameof(proxyInstance));
+			}
 		}
 		return (friendlyTypeName, value, proxyInstance, false);
 	}
@@ -96,7 +102,7 @@ public partial class ManagedDebugger
 		var baseTypeName = GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType.Base);
 		if (baseTypeName == "System.Enum")
 		{
-			var valueFieldDef = metaDataImport.FindField(corDebugObjectValue.Class.Token, "value__", 0, 0);
+			var valueFieldDef = metaDataImport.FindField(corDebugObjectValue.Class.Token, "value__", IntPtr.Zero, 0);
 			var valueField = corDebugObjectValue.GetFieldValue(corDebugObjectValue.Class.Raw, valueFieldDef);
 			var value = GetValueForCorDebugValue(valueField);
 
@@ -104,7 +110,7 @@ public partial class ManagedDebugger
 			return new(GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType), enumDisplayValue, false, null);
 		}
 		var typeName = GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType);
-		if (typeName.EndsWith('?'))
+		if (typeName.EndsWith("?", StringComparison.Ordinal))
 		{
 			var underlyingValueOrNull = GetUnderlyingValueOrNullFromNullableStruct(corDebugObjectValue);
 			if (underlyingValueOrNull is null) return new(typeName, "null", false, null);
@@ -130,8 +136,8 @@ public partial class ManagedDebugger
 	{
 		var module = corDebugObjectValue.Class.Module;
 		var metaDataImport = module.GetMetaDataInterface().MetaDataImport;
-		var hasValueFieldDef = metaDataImport.FindField(corDebugObjectValue.Class.Token, "hasValue", 0, 0);
-		var valueFieldDef = metaDataImport.FindField(corDebugObjectValue.Class.Token, "value", 0, 0);
+		var hasValueFieldDef = metaDataImport.FindField(corDebugObjectValue.Class.Token, "hasValue", IntPtr.Zero, 0);
+		var valueFieldDef = metaDataImport.FindField(corDebugObjectValue.Class.Token, "value", IntPtr.Zero, 0);
 
 		var hasValueDebugObjectValue = corDebugObjectValue.GetFieldValue(corDebugObjectValue.Class.Raw, hasValueFieldDef);
 		var hasValueValue = GetValueForCorDebugValue(hasValueDebugObjectValue);
@@ -191,9 +197,8 @@ public partial class ManagedDebugger
 		var typeHasTypeParameters = backtickIndex is not -1;
 		if (typeHasTypeParameters)
 		{
-			var typeNameAsSpan = typeName.AsSpan();
-			var aritySpan = typeNameAsSpan[(backtickIndex + 1)..];
-			if (int.TryParse(aritySpan, out var arity) is false) throw new InvalidOperationException("Failed to parse generic type arity from type name");
+			var arityText = typeName.Substring(backtickIndex + 1);
+			if (int.TryParse(arityText, out var arity) is false) throw new InvalidOperationException("Failed to parse generic type arity from type name");
 			var typeParametersFriendlyNamesForType = typeParameterTypes.Take(arity).Select(GetCorDebugTypeFriendlyName).ToImmutableArray();
 			typeParameterTypes.RemoveRange(0, arity);
 			typeName = $"{typeName[..backtickIndex]}<{string.Join(", ", typeParametersFriendlyNamesForType)}>";
@@ -204,7 +209,7 @@ public partial class ManagedDebugger
 			var span = typeName.AsSpan();
 			var openingIndex = span.IndexOf('<');
 			var closingIndex = span.LastIndexOf('>');
-			var underlyingType = span.Slice(openingIndex + 1, closingIndex - openingIndex - 1);
+			var underlyingType = span.Slice(openingIndex + 1, closingIndex - openingIndex - 1).ToString();
 			typeName = $"{underlyingType}?";
 		}
 

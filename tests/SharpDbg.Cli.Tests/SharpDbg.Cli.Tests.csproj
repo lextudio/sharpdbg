@@ -44,6 +44,8 @@
     <ProjectReference Include="..\..\src\SharpDbg.Cli\SharpDbg.Cli.csproj" />
 	  <!-- ensure the project we are debugging is up to date -->
     <ProjectReference Include="..\DebuggableConsoleApp\DebuggableConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <!-- ensure the .NET Framework test target is up to date (Windows only) -->
+    <ProjectReference Include="..\DebuggableConsoleAppNetFx\DebuggableConsoleAppNetFx.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

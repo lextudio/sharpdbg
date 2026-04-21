@@ -85,8 +85,11 @@ public static class Extensions
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static bool IsCompilerGeneratedFieldName(string fieldName)
 	{
-		ArgumentException.ThrowIfNullOrWhiteSpace(fieldName);
-		if (fieldName.Length > 1 && fieldName.StartsWith('<')) return true;
+		if (string.IsNullOrWhiteSpace(fieldName))
+		{
+			throw new ArgumentException("Field name cannot be null or whitespace.", nameof(fieldName));
+		}
+		if (fieldName.Length > 1 && fieldName[0] == '<') return true;
 		if (fieldName.Length > 4 && fieldName.StartsWith("CS$<", StringComparison.Ordinal)) return true;
 		return false;
 	}
@@ -135,7 +138,7 @@ public static class Extensions
 	public static async Task<CorDebugValue?> CallParameterizedFunctionAsync(this CorDebugEval eval, CorDebugManagedCallback managedCallback, CorDebugFunction corDebugFunction, int typeParamCount, ICorDebugType[]? typeParameterArgs, int paramCount, ICorDebugValue[] corDebugValues)
 	{
 		CorDebugValue? returnValue = null;
-		var evalCompleteTcs = new TaskCompletionSource();
+		var evalCompleteTcs = new TaskCompletionSource<bool>();
 		try
 		{
 			// Ensure that the object passed in corDebugValues is a CorDebugReferenceValue (when containing object is an instance class), ie must not be dereferenced
@@ -158,7 +161,7 @@ public static class Extensions
 			if (e.Eval.Raw != eval.Raw) return;
 			var getResultResult = e.Eval.TryGetResult(out returnValue);
 			if (getResultResult is not HRESULT.CORDBG_S_FUNC_EVAL_HAS_NO_RESULT && returnValue is null) getResultResult.ThrowOnNotOK();
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 		void CallbacksOnOnEvalException(object? sender, EvalExceptionCorDebugManagedCallbackEventArgs e)
 		{
@@ -171,14 +174,14 @@ public static class Extensions
 			}
 
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 	}
 
 	public static async Task<CorDebugValue?> NewParameterizedObjectNoConstructorAsync(this CorDebugEval eval, CorDebugManagedCallback managedCallback, CorDebugClass pClass, int nTypeArgs, ICorDebugType[]? ppTypeArgs)
 	{
 		CorDebugValue? returnValue = null;
-		var evalCompleteTcs = new TaskCompletionSource();
+		var evalCompleteTcs = new TaskCompletionSource<bool>();
 		try
 		{
 			eval.NewParameterizedObjectNoConstructor(pClass.Raw, nTypeArgs, ppTypeArgs);
@@ -199,7 +202,7 @@ public static class Extensions
 		{
 			if (e.Eval.Raw != eval.Raw) return;
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 		void CallbacksOnOnEvalException(object? sender, EvalExceptionCorDebugManagedCallbackEventArgs e)
 		{
@@ -212,14 +215,14 @@ public static class Extensions
 			}
 
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 	}
 
 	public static async Task<CorDebugValue?> NewParameterizedObjectAsync(this CorDebugEval eval, CorDebugManagedCallback managedCallback, CorDebugFunction corDebugFunction, int nTypeArgs, ICorDebugType[]? ppTypeArgs, int argCount, ICorDebugValue[] argValues)
 	{
 		CorDebugValue? returnValue = null;
-		var evalCompleteTcs = new TaskCompletionSource();
+		var evalCompleteTcs = new TaskCompletionSource<bool>();
 		try
 		{
 			eval.NewParameterizedObject(corDebugFunction.Raw, nTypeArgs, ppTypeArgs, argCount, argValues);
@@ -240,7 +243,7 @@ public static class Extensions
 		{
 			if (e.Eval.Raw != eval.Raw) return;
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 		void CallbacksOnOnEvalException(object? sender, EvalExceptionCorDebugManagedCallbackEventArgs e)
 		{
@@ -253,14 +256,14 @@ public static class Extensions
 			}
 
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 	}
 
 	public static async Task<CorDebugValue> NewStringAsync(this CorDebugEval eval, CorDebugManagedCallback managedCallback, string str)
 	{
 		CorDebugValue? returnValue = null;
-		var evalCompleteTcs = new TaskCompletionSource();
+		var evalCompleteTcs = new TaskCompletionSource<bool>();
 		try
 		{
 			eval.NewString(str);
@@ -281,7 +284,7 @@ public static class Extensions
 		{
 			if (e.Eval.Raw != eval.Raw) return;
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 		void CallbacksOnOnEvalException(object? sender, EvalExceptionCorDebugManagedCallbackEventArgs e)
 		{
@@ -294,7 +297,7 @@ public static class Extensions
 			}
 
 			returnValue = e.Eval.Result;
-			evalCompleteTcs.SetResult();
+			evalCompleteTcs.SetResult(true);
 		}
 	}
 

@@ -73,7 +73,10 @@ public class PortablePdbWriter2
 	{
 		MetadataBuilder metadata = new MetadataBuilder();
 		MetadataReader reader = file.Metadata;
-		var entrypointHandle = MetadataTokens.MethodDefinitionHandle(file.Reader.PEHeaders.CorHeader.EntryPointTokenOrRelativeVirtualAddress);
+			var corHeader = file.Reader.PEHeaders.CorHeader;
+			var entrypointHandle = corHeader is null
+				? default
+				: MetadataTokens.MethodDefinitionHandle(corHeader.EntryPointTokenOrRelativeVirtualAddress);
 
 		var sequencePointBlobs = new Dictionary<MethodDefinitionHandle, (DocumentHandle Document, BlobHandle SequencePoints)>();
 		var localScopes = new List<(MethodDefinitionHandle Method, ImportScopeInfo Import, int Offset, int Length, HashSet<ILVariable> Locals)>();

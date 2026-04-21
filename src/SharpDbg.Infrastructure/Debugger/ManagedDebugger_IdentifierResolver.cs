@@ -39,7 +39,10 @@ public partial class ManagedDebugger
 	private async Task<(CorDebugValue Value, int? NextIdentifier)> ResolveFirstIdentifier(List<string> identifiers, ThreadId threadId, FrameStackDepth stackDepth, CorDebugValue? optionalRootValue)
 	{
 		var firstIdentifier = identifiers[0];
-		ArgumentException.ThrowIfNullOrWhiteSpace(firstIdentifier);
+		if (string.IsNullOrWhiteSpace(firstIdentifier))
+		{
+			throw new ArgumentException("Identifier cannot be null or whitespace.", nameof(identifiers));
+		}
 		// Try
 		// 1. Stack variable, e.g. local variable or argument
 		// 2. Field or property of 'this' if available (instance or static)
@@ -65,13 +68,13 @@ public partial class ManagedDebugger
 		var corDebugFunction = frame.Function;
 		var module = _modules[corDebugFunction.Module.BaseAddress];
 
-		foreach (var (index, local) in frame.LocalVariables.Index())
+		foreach (var entry in frame.LocalVariables.WithIndex())
 		{
-			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, index);
+			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, entry.index);
 			if (localVariableName is null) continue; // Compiler generated locals will not be found. E.g. DefaultInterpolatedStringHandler
 			if (localVariableName == identifier)
 			{
-				return local;
+				return entry.item;
 			}
 		}
 
@@ -90,17 +93,17 @@ public partial class ManagedDebugger
 
 		var skipCount = isStatic ? 0 : 1;
 
-		foreach (var (index, argumentValue) in frame.Arguments.Skip(skipCount).Index())
+		foreach (var entry in frame.Arguments.Skip(skipCount).WithIndex())
 		{
 			// index 0 is the return value, so we add 1 to get to the arguments
-			var paramDef = metadataImport.GetParamForMethodIndex(corDebugFunction.Token, index + 1);
+			var paramDef = metadataImport.GetParamForMethodIndex(corDebugFunction.Token, entry.index + 1);
 			var paramProps = metadataImport.GetParamProps(paramDef);
 			var argumentName = paramProps.szName;
 			if (argumentName is null) continue;
 
 			if (argumentName == identifier)
 			{
-				return argumentValue;
+				return entry.item;
 			}
 		}
 

@@ -73,35 +73,35 @@ public static class DebugAdapterProcessHelper
 		};
 	}
 
-	public static LaunchRequest GetLaunchRequest(string program, string[] args, bool stopAtEntry = false)
+	public static LaunchRequest GetLaunchRequest(string program, string[] args, bool stopAtEntry = false, string? runtimeFlavor = null)
 	{
-		return new LaunchRequest
+		var props = new Dictionary<string, JToken>
 		{
-			ConfigurationProperties = new Dictionary<string, JToken>
-			{
-				["name"] = "LaunchRequestName",
-				["type"] = "coreclr",
-				["program"] = program,
-				["args"] = JToken.FromObject(args),
-				["stopAtEntry"] = stopAtEntry
-			}
+			["name"] = "LaunchRequestName",
+			["type"] = "coreclr",
+			["program"] = program,
+			["args"] = JToken.FromObject(args),
+			["stopAtEntry"] = stopAtEntry
 		};
+		if (runtimeFlavor is not null)
+			props["runtimeFlavor"] = runtimeFlavor;
+		return new LaunchRequest { ConfigurationProperties = props };
 	}
 
-	public static AttachRequest GetAttachRequest(int processId, bool justMyCode = true, bool stopAtEntry = false)
+	public static AttachRequest GetAttachRequest(int processId, bool justMyCode = true, bool stopAtEntry = false, string? runtimeFlavor = null)
 	{
-		return new AttachRequest
+		var props = new Dictionary<string, JToken>
 		{
-			ConfigurationProperties = new Dictionary<string, JToken>
-			{
-				["name"] = "AttachRequestName",
-				["type"] = "coreclr",
-				["processId"] = processId,
-				["console"] = "internalConsole", // integratedTerminal, externalTerminal, internalConsole
-				["justMyCode"] = justMyCode,
-				["stopAtEntry"] = stopAtEntry
-			}
+			["name"] = "AttachRequestName",
+			["type"] = "coreclr",
+			["processId"] = processId,
+			["console"] = "internalConsole",
+			["justMyCode"] = justMyCode,
+			["stopAtEntry"] = stopAtEntry
 		};
+		if (runtimeFlavor is not null)
+			props["runtimeFlavor"] = runtimeFlavor;
+		return new AttachRequest { ConfigurationProperties = props };
 	}
 
 	public static SetBreakpointsRequest GetSetBreakpointsRequest(int? line = null, string? filePath = null)
