@@ -72,6 +72,16 @@ public partial class ManagedDebugger
 			return;
 		}
 
+		// On non-Windows, .dll/.exe assemblies cannot be exec'd directly; wrap with dotnet host
+		if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+		    (program.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+		     program.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
+		{
+			_logger?.Invoke($"Non-Windows: prepending dotnet host for assembly launch");
+			args = args != null ? [program, ..args] : [program];
+			program = "dotnet";
+		}
+
 		// Build command line: "program" "arg1" "arg2" ...
 		var commandLine = new StringBuilder();
 		commandLine.Append('"').Append(program).Append('"');
@@ -84,14 +94,24 @@ public partial class ManagedDebugger
 
 		// Initialize DbgShim
 		var dbgShimPath = DbgShimResolver.Resolve();
+		_logger?.Invoke($"DbgShim path: {dbgShimPath}");
 		var dbgshim = new DbgShim(NativeLibrary.Load(dbgShimPath));
 
 		// Create process suspended
-		var result = dbgshim.CreateProcessForLaunch(
-			commandLine.ToString(),
-			bSuspendProcess: true,
-			lpEnvironment: IntPtr.Zero, // TODO: support environment variables
-			lpCurrentDirectory: workingDirectory);
+		CreateProcessForLaunchResult result;
+		try
+		{
+			result = dbgshim.CreateProcessForLaunch(
+				commandLine.ToString(),
+				bSuspendProcess: true,
+				lpEnvironment: IntPtr.Zero, // TODO: support environment variables
+				lpCurrentDirectory: workingDirectory);
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"CreateProcessForLaunch failed: {ex.GetType().Name}: {ex.Message}");
+			throw;
+		}
 
 		var processId = result.ProcessId;
 		var resumeHandle = result.ResumeHandle;
