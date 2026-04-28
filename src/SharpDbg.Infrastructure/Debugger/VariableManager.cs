@@ -37,7 +37,11 @@ public class VariableManager
 {
 	private int _nextReference = 1;
 	private readonly Dictionary<int, VariablesReference> _references = new();
-	private readonly Lock _lock = new();
+#if NET10_0_OR_GREATER
+	private readonly System.Threading.Lock _lock = new();
+#else
+	private readonly object _lock = new();
+#endif
 
 	/// <summary>
 	/// Create a reference for an object

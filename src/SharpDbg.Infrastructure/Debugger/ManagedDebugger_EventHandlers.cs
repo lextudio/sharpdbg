@@ -100,7 +100,10 @@ public partial class ManagedDebugger
 		{
 			//System.Diagnostics.Debugger.Launch();
 			var breakpoint = breakpointCorDebugManagedCallbackEventArgs.Breakpoint;
-			ArgumentNullException.ThrowIfNull(breakpoint);
+			if (breakpoint is null)
+			{
+				throw new ArgumentNullException(nameof(breakpoint));
+			}
 
 			if (_stepper is not null)
 			{
@@ -146,8 +149,23 @@ public partial class ManagedDebugger
 				}
 			}
 
-			var managedBreakpoint = _breakpointManager.FindByCorBreakpoint(functionBreakpoint.Raw);
-			ArgumentNullException.ThrowIfNull(managedBreakpoint);
+			var activeFrame = corThread.ActiveFrame as CorDebugILFrame;
+			var activeFunction = activeFrame?.Function;
+			var activeModuleBaseAddress = activeFunction != null ? (long)activeFunction.Module.BaseAddress : 0;
+			var activeMethodToken = activeFunction?.Token ?? 0;
+			var activeIlOffset = activeFrame?.IP.pnOffset ?? -1;
+
+			var managedBreakpoint = _breakpointManager.FindByCorBreakpoint(functionBreakpoint.Raw)
+				?? (activeFrame != null
+					? _breakpointManager.FindByBinding(activeModuleBaseAddress, activeMethodToken, activeIlOffset)
+					: null);
+			if (managedBreakpoint is null)
+			{
+				_logger?.Invoke($"Breakpoint hit could not be mapped back to a managed breakpoint. Module=0x{activeModuleBaseAddress:X}, Method=0x{activeMethodToken:X}, ILOffset={activeIlOffset}");
+				Continue();
+				return;
+			}
+			IsRunning = false;
 
 			managedBreakpoint.HitCount++;
 
@@ -166,6 +184,8 @@ public partial class ManagedDebugger
 			}
 
 			IsRunning = false;
+
+			_logger?.Invoke($"Dispatching stopped event for breakpoint at {managedBreakpoint.FilePath}:{managedBreakpoint.Line} on thread {corThread.Id}");
 			OnStopped2?.Invoke(corThread.Id, managedBreakpoint.FilePath, managedBreakpoint.Line, 0, "breakpoint", null);
 		}
 		catch (Exception e)
@@ -199,7 +219,7 @@ public partial class ManagedDebugger
 			Continue();
 			return;
 		}
-		var symbolReader = module.SymbolReader ?? throw new UnreachableException("Source info was found, but no symbol reader is available for the module - this should never happen");
+		var symbolReader = module.SymbolReader ?? throw new InvalidOperationException("Source info was found, but no symbol reader is available for the module - this should never happen");
 
 		var (currentIlOffset, nextUserCodeIlOffset) = symbolReader.GetFrameCurrentIlOffsetAndNextUserCodeIlOffset(ilFrame);
 		if (stepCompleteEventArgs.Reason is CorDebugStepReason.STEP_CALL && currentIlOffset < nextUserCodeIlOffset)

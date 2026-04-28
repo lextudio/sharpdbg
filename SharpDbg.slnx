@@ -22,6 +22,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/DebuggableConsoleApp/DebuggableConsoleApp.csproj" />
+    <Project Path="tests/DebuggableConsoleAppNetFx/DebuggableConsoleAppNetFx.csproj" />
     <Project Path="tests/SharpDbg.Cli.Tests/SharpDbg.Cli.Tests.csproj" />
   </Folder>
 </Solution>

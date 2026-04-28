@@ -111,7 +111,11 @@ internal static class DbgShimResolver
 		return null;
 	}
 
+#if NET5_0_OR_GREATER
 	private static bool TryGetPlatformInfo(out string? runtimePrefix, [NotNullWhen(true)] out string? fileName)
+#else
+	private static bool TryGetPlatformInfo(out string? runtimePrefix, out string? fileName)
+#endif
 	{
 		//RuntimeInformation.IsOSPlatform requires at least .NET Framework 4.7.1
 
@@ -136,8 +140,8 @@ internal static class DbgShimResolver
 			return true;
 		}
 
-		runtimePrefix = null;
-		fileName = null;
+		runtimePrefix = null!;
+		fileName = null!;
 		return false;
 	}
 }

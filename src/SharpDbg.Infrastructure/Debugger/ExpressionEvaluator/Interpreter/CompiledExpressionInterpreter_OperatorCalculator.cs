@@ -37,7 +37,7 @@ public partial class CompiledExpressionInterpreter
 
 		var value1 = await GetFrontStackEntryValue(evalStack);
 		// reset the first entry to hold the result
-		evalStack.First!.ValueRef = new EvalStackEntry();
+		evalStack.First!.Value = new EvalStackEntry();
 
 		var realValue1 = await GetRealValueWithType(value1!);
 		var elemType1 = realValue1.Type;

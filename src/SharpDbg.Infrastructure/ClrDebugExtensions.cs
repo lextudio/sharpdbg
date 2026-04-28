@@ -1,4 +1,6 @@
-﻿using ClrDebug;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using ClrDebug;
 
 namespace SharpDbg.Infrastructure;
 
@@ -113,6 +115,115 @@ public static class ClrDebugExtensions
 		}
 
 		//while (true) Thread.Sleep(1);
+	}
+
+	public static CorDebug CreateDesktopCorDebug(string executablePath)
+	{
+		var metaHost = Extensions.CLRCreateInstance().CLRMetaHost;
+		var runtimeVersion = metaHost.GetVersionFromFile(executablePath);
+		var runtime = Extensions.GetRuntime(metaHost, runtimeVersion);
+		return Extensions.GetInterface(runtime).CorDebug;
+	}
+
+	public static CorDebug AttachToDesktopClr(DbgShim dbgshim, int pid)
+	{
+		try
+		{
+			var enumResult = dbgshim.EnumerateCLRs(pid);
+			try
+			{
+				if (enumResult.Items.Length > 0)
+				{
+					var runtime = enumResult.Items[0];
+					var versionStr = dbgshim.CreateVersionStringFromModule(pid, runtime.Path);
+					return dbgshim.CreateDebuggingInterfaceFromVersionEx(CorDebugInterfaceVersion.CorDebugVersion_4_0, versionStr);
+				}
+			}
+			finally
+			{
+				dbgshim.CloseCLREnumeration(enumResult);
+			}
+		}
+		catch
+		{
+			// Some Windows/architecture combinations fail to surface Desktop CLR
+			// via DbgShim for an already-running process even though the runtime
+			// is loaded. Fall back to the CLR MetaHost enumeration API.
+		}
+
+		return AttachToDesktopClrViaMetaHost(pid);
+	}
+
+	public static CorDebug WaitForDesktopClr(DbgShim dbgshim, int pid, TimeSpan timeout)
+	{
+		var stopwatch = Stopwatch.StartNew();
+		Exception? lastError = null;
+
+		while (stopwatch.Elapsed < timeout)
+		{
+			try
+			{
+				return AttachToDesktopClr(dbgshim, pid);
+			}
+			catch (Exception ex)
+			{
+				lastError = ex;
+			}
+
+			Thread.Sleep(100);
+		}
+
+		throw new TimeoutException(lastError == null
+			? $"Timeout waiting for desktop CLR to start in target process {pid}"
+			: $"Timeout waiting for desktop CLR to start in target process {pid}: {lastError.Message}");
+	}
+
+	private static CorDebug AttachToDesktopClrViaMetaHost(int pid)
+	{
+		using var process = Process.GetProcessById(pid);
+		var metaHost = Extensions.CLRCreateInstance().CLRMetaHost;
+		var runtimeObject = metaHost
+			.EnumerateLoadedRuntimes(process.Handle)
+			.Cast<object>()
+			.FirstOrDefault();
+
+		if (runtimeObject == null)
+			throw new InvalidOperationException($"No CLR found in process {pid}. Ensure the target is a running .NET Framework process.");
+
+		var runtime = ToClrRuntimeInfo(runtimeObject);
+		return Extensions.GetInterface(runtime).CorDebug;
+	}
+
+	private static CLRRuntimeInfo ToClrRuntimeInfo(object runtimeObject)
+	{
+		if (runtimeObject is CLRRuntimeInfo runtimeInfo)
+			return runtimeInfo;
+
+		if (runtimeObject is ICLRRuntimeInfo rawRuntimeInfo)
+			return new CLRRuntimeInfo(rawRuntimeInfo);
+
+		var unknown = Marshal.GetIUnknownForObject(runtimeObject);
+		try
+		{
+			var iid = typeof(ICLRRuntimeInfo).GUID;
+			Marshal.QueryInterface(unknown, ref iid, out var runtimeInfoPtr);
+			if (runtimeInfoPtr == IntPtr.Zero)
+				throw new InvalidCastException($"Could not acquire {nameof(ICLRRuntimeInfo)} from loaded runtime object.");
+
+			try
+			{
+				var raw = (ICLRRuntimeInfo)Marshal.GetObjectForIUnknown(runtimeInfoPtr);
+				return new CLRRuntimeInfo(raw);
+			}
+			finally
+			{
+				Marshal.Release(runtimeInfoPtr);
+			}
+		}
+		finally
+		{
+			Marshal.Release(unknown);
+		}
 	}
 
 	private static void InitCorDebug(CorDebug cordebug, int pid)

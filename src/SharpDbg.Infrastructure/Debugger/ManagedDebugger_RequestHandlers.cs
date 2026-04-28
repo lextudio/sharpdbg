@@ -19,20 +19,22 @@ public partial class ManagedDebugger
 	private string[]? _pendingLaunchArgs;
 	private string? _pendingLaunchWorkingDirectory;
 	private bool _pendingLaunchStopAtEntry;
+	private ManagedRuntimeFlavor _pendingLaunchRuntimeFlavor;
 
 	/// <summary>
 	/// Launch a process to debug using DbgShim's CreateProcessForLaunch.
 	/// This properly launches the process suspended and waits for CLR startup.
 	/// </summary>
-	public void Launch(string program, string[] args, string? workingDirectory, Dictionary<string, string>? env, bool stopAtEntry)
+	public void Launch(string program, string[] args, string? workingDirectory, Dictionary<string, string>? env, bool stopAtEntry = false, string runtimeFlavor = "auto")
 	{
-		_logger?.Invoke($"Launching program: {program} {string.Join(' ', args ?? Array.Empty<string>())}");
+		_logger?.Invoke($"Launching program: {program} {string.Join(" ", args ?? Array.Empty<string>())}");
 
 		// Store launch parameters for deferred execution in ConfigurationDone
 		_pendingLaunchProgram = program;
 		_pendingLaunchArgs = args;
 		_pendingLaunchWorkingDirectory = workingDirectory;
 		_pendingLaunchStopAtEntry = stopAtEntry;
+		_pendingLaunchRuntimeFlavor = ParseRuntimeFlavor(runtimeFlavor);
 	}
 
 	/// <summary>
@@ -50,11 +52,22 @@ public partial class ManagedDebugger
 		var args = _pendingLaunchArgs ?? Array.Empty<string>();
 		var workingDirectory = _pendingLaunchWorkingDirectory;
 		var stopAtEntry = _pendingLaunchStopAtEntry;
+		var runtimeFlavor = ResolveLaunchRuntimeFlavor(_pendingLaunchRuntimeFlavor, program, args);
 
 		// Clear pending launch
 		_pendingLaunchProgram = null;
 		_pendingLaunchArgs = null;
 		_pendingLaunchWorkingDirectory = null;
+		_pendingLaunchRuntimeFlavor = ManagedRuntimeFlavor.Auto;
+
+		_launchRuntimeFlavor = runtimeFlavor;
+		_logger?.Invoke($"Using launch runtime flavor: {runtimeFlavor}");
+
+		if (runtimeFlavor == ManagedRuntimeFlavor.DesktopClr)
+		{
+			PerformDesktopClrLaunch(program, args, workingDirectory, env: null);
+			return;
+		}
 
 		// Build command line: "program" "arg1" "arg2" ...
 		var commandLine = new StringBuilder();
@@ -136,6 +149,80 @@ public partial class ManagedDebugger
 		_logger?.Invoke($"Successfully attached to process: {processId}");
 	}
 
+	private void PerformDesktopClrLaunch(string program, string[] args, string? workingDirectory, Dictionary<string, string>? env)
+	{
+		var commandLine = new StringBuilder();
+		commandLine.Append('"').Append(program).Append('"');
+		foreach (var arg in args)
+		{
+			commandLine.Append(' ').Append('"').Append(arg.Replace("\"", "\\\"")).Append('"');
+		}
+
+		_logger?.Invoke($"Creating desktop CLR process for launch: {commandLine}");
+
+		var cordebug = ClrDebugExtensions.CreateDesktopCorDebug(program);
+		_logger?.Invoke("Desktop CLR debugging interface created");
+
+		_corDebug = cordebug;
+		_corDebug.Initialize();
+		_corDebug.SetManagedHandler(_callbacks);
+
+		var startupInfo = new STARTUPINFOW
+		{
+			cb = Marshal.SizeOf<STARTUPINFOW>()
+		};
+		var processInfo = new PROCESS_INFORMATION();
+		var currentDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+			? Path.GetDirectoryName(program)
+			: workingDirectory;
+
+		_process = _corDebug.CreateProcess(
+			program,
+			commandLine.ToString(),
+			default,
+			default,
+			false,
+			0,
+			IntPtr.Zero,
+			currentDirectory ?? string.Empty,
+			startupInfo,
+			ref processInfo,
+			CorDebugCreateProcessFlags.DEBUG_NO_SPECIAL_OPTIONS);
+
+		var processId = processInfo.dwProcessId;
+		_isAttached = true;
+		IsRunning = true;
+
+		_logger?.Invoke($"Successfully attached to desktop CLR process: {processId}");
+	}
+
+	private static string? ResolveLaunchTargetPath(string program, string[] args)
+	{
+		if (string.Equals(Path.GetFileNameWithoutExtension(program), "dotnet", StringComparison.OrdinalIgnoreCase) &&
+			args.Length > 0 &&
+			(args[0].EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || args[0].EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
+		{
+			return args[0];
+		}
+
+		return program;
+	}
+
+	private static ManagedRuntimeFlavor ParseRuntimeFlavor(string runtimeFlavor)
+	{
+		return runtimeFlavor?.ToLowerInvariant() switch
+		{
+			"coreclr" => ManagedRuntimeFlavor.CoreClr,
+			"desktopclr" => ManagedRuntimeFlavor.DesktopClr,
+			_ => ManagedRuntimeFlavor.Auto
+		};
+	}
+
+	private static ManagedRuntimeFlavor ResolveLaunchRuntimeFlavor(ManagedRuntimeFlavor runtimeFlavor, string program, string[] args)
+	{
+		return runtimeFlavor == ManagedRuntimeFlavor.Auto ? ManagedRuntimeFlavor.CoreClr : runtimeFlavor;
+	}
+
 	public bool RemoveBreakpoint(int id)
 	{
 		_logger?.Invoke($"RemoveBreakpoint: {id}");
@@ -158,11 +245,12 @@ public partial class ManagedDebugger
 	/// <summary>
 	/// Store process ID for later attach (actual attach happens in ConfigurationDone)
 	/// </summary>
-	public void Attach(int processId, bool justMyCode)
+	public void Attach(int processId, bool justMyCode, string runtimeFlavor = "auto")
 	{
 		_logger?.Invoke($"Storing attach target: {processId}");
 		_justMyCode = justMyCode;
 		_pendingAttachProcessId = processId;
+		_pendingAttachRuntimeFlavor = ParseRuntimeFlavor(runtimeFlavor);
 	}
 
 	/// <summary>
@@ -181,8 +269,9 @@ public partial class ManagedDebugger
 		// Otherwise check for pending attach
 		else if (_pendingAttachProcessId.HasValue)
 		{
-			PerformAttach(_pendingAttachProcessId.Value);
+			PerformAttach(_pendingAttachProcessId.Value, _pendingAttachRuntimeFlavor);
 			_pendingAttachProcessId = null;
+			_pendingAttachRuntimeFlavor = ManagedRuntimeFlavor.Auto;
 		}
 	}
 
@@ -409,8 +498,10 @@ public partial class ManagedDebugger
 				var frames = chain.Frames;
 				var filterFrames = frames.AsValueEnumerable().Skip(startFrame).Take(levels ?? int.MaxValue);
 
-				foreach (var (index, frame) in filterFrames.Index())
+				foreach (var entry in filterFrames.ToArray().WithIndex())
 				{
+					var index = entry.index;
+					var frame = entry.item;
 					if (frame is CorDebugILFrame ilFrame)
 					{
 						var function = ilFrame.Function;
@@ -563,13 +654,19 @@ public partial class ManagedDebugger
 		if (frameId is null or 0) throw new InvalidOperationException("Frame ID is required for evaluation");
 
 		var variablesReference = _variableManager.GetReference(frameId.Value);
-		ArgumentNullException.ThrowIfNull(variablesReference);
+		if (variablesReference is null)
+		{
+			throw new ArgumentNullException(nameof(frameId));
+		}
 		if (variablesReference.Value.ReferenceKind is not StoredReferenceKind.Scope) throw new InvalidOperationException("Frame ID does not refer to a stack frame scope");
 		var thread = _process!.Threads.Single(s => s.Id == variablesReference.Value.ThreadId.Value);
 
 		var compiledExpression = ExpressionCompiler.Compile(expression, false);
 		var evalContext = new CompiledExpressionEvaluationContext(thread, variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth);
-		ArgumentNullException.ThrowIfNull(_expressionInterpreter);
+		if (_expressionInterpreter is null)
+		{
+			throw new ArgumentNullException(nameof(_expressionInterpreter));
+		}
 		var result = await _expressionInterpreter.Interpret(compiledExpression, evalContext);
 
 		if (result.Error is not null)

@@ -9,6 +9,13 @@ using ZLinq;
 
 namespace SharpDbg.Infrastructure.Debugger;
 
+public enum ManagedRuntimeFlavor
+{
+	Auto,
+	CoreClr,
+	DesktopClr
+}
+
 // v1 of this class was AI generated, and could definitely do with some cleaning up
 public partial class ManagedDebugger : IDisposable
 {
@@ -22,9 +29,11 @@ public partial class ManagedDebugger : IDisposable
 	private readonly Dictionary<long, ModuleInfo> _modules = new();
 	private bool _isAttached;
 	private int? _pendingAttachProcessId;
+	private ManagedRuntimeFlavor _pendingAttachRuntimeFlavor;
 	private bool _justMyCode;
 	private AsyncStepper? _asyncStepper;
 	private CompiledExpressionInterpreter _expressionInterpreter = null!;
+	private ManagedRuntimeFlavor _launchRuntimeFlavor = ManagedRuntimeFlavor.Auto;
 
 	public event Action<int, string>? OnStopped;
 	// ThreadId, FilePath, Line, Column, Reason
@@ -73,28 +82,52 @@ public partial class ManagedDebugger : IDisposable
 	}
 
 	/// <summary>
-	/// Actually attach to an existing process
+	/// Actually attach to an existing process, routing to the correct CLR flavor
 	/// </summary>
-	private void PerformAttach(int processId)
+	private void PerformAttach(int processId, ManagedRuntimeFlavor requestedFlavor = ManagedRuntimeFlavor.Auto)
 	{
 		_logger?.Invoke($"Attaching to process: {processId}");
 
-		// Initialize the debugger
+		var flavor = requestedFlavor == ManagedRuntimeFlavor.Auto ? ManagedRuntimeFlavor.CoreClr : requestedFlavor;
+		_launchRuntimeFlavor = flavor;
+		_logger?.Invoke($"Using attach runtime flavor: {flavor}");
+
 		var dbgShimPath = DbgShimResolver.Resolve();
 		var dbgshim = new DbgShim(NativeLibrary.Load(dbgShimPath));
+
+		if (flavor == ManagedRuntimeFlavor.DesktopClr)
+		{
+			PerformDesktopClrAttach(processId, dbgshim);
+			return;
+		}
+
 		_ = Task.Run(() =>
 		{
 			_corDebug = ClrDebugExtensions.Automatic(dbgshim, processId);
 			_corDebug.Initialize();
 			_corDebug.SetManagedHandler(_callbacks);
 
-			// Attach to the process
 			_process = _corDebug.DebugActiveProcess(processId, false);
 			_isAttached = true;
 			IsRunning = true;
 
-			_logger?.Invoke($"Attached to process: {processId}");
+			_logger?.Invoke($"Attached to CoreCLR process: {processId}");
 		});
+	}
+
+	private void PerformDesktopClrAttach(int processId, DbgShim dbgshim)
+	{
+		_logger?.Invoke($"Attaching to Desktop CLR process: {processId}");
+
+		_corDebug = ClrDebugExtensions.WaitForDesktopClr(dbgshim, processId, TimeSpan.FromSeconds(5));
+		_corDebug.Initialize();
+		_corDebug.SetManagedHandler(_callbacks);
+
+		_process = _corDebug.DebugActiveProcess(processId, false);
+		_isAttached = true;
+		IsRunning = true;
+
+		_logger?.Invoke($"Attached to Desktop CLR process: {processId}");
 	}
 
 	private void ContinueProcess()
@@ -293,7 +326,14 @@ public partial class ManagedDebugger : IDisposable
 		Disconnect(terminateDebuggee: false);
 
 		// Remove our managed handler from ICorDebug so native code can release references
-		_corDebug?.SetManagedHandler(null);
+		try
+		{
+			_corDebug?.SetManagedHandler(null);
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"Error removing managed handler during cleanup: {ex.Message}");
+		}
 
 		// Unsubscribe from callbacks to avoid any further event dispatch
 		_callbacks.OnAnyEvent -= OnAnyEvent;

@@ -51,6 +51,31 @@ public static partial class TestHelper
 		debugProtocolHost.SendRequestSync(attachRequest);
 		return debugProtocolHost;
 	}
+
+	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, string[] args, string? runtimeFlavor = null)
+	{
+		var launchRequest = DebugAdapterProcessHelper.GetLaunchRequest(program, args, runtimeFlavor);
+		debugProtocolHost.SendRequestSync(launchRequest);
+		return debugProtocolHost;
+	}
+
+	public static DebugProtocolHost WithDisconnectRequest(this DebugProtocolHost debugProtocolHost, bool terminateDebuggee = true)
+	{
+		var disconnectRequest = new DisconnectRequest { TerminateDebuggee = terminateDebuggee };
+		debugProtocolHost.SendRequestSync(disconnectRequest);
+		return debugProtocolHost;
+	}
+
+	public static (DebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer StoppedEventTcs, OopOrInProcDebugAdapter DebugAdapter) GetRunningDebugProtocolHostForLaunch(ITestOutputHelper testOutputHelper)
+	{
+		var (input, output, adapter) = InMemoryDebugAdapterHelper.GetAdapterStreams(testOutputHelper);
+		var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
+		var stoppedEventTcs = new TcsContainer { Tcs = new TaskCompletionSource<StoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously) };
+		debugProtocolHost.RegisterEventType<StoppedEvent>(@event => stoppedEventTcs.Tcs.TrySetResult(@event));
+		debugProtocolHost.Run();
+		return (debugProtocolHost, initializedEventTcs, stoppedEventTcs, new OopOrInProcDebugAdapter(adapter));
+	}
 	public static async Task<DebugProtocolHost> WaitForInitializedEvent(this DebugProtocolHost debugProtocolHost, TaskCompletionSource initializedEventTcs)
 	{
 		await initializedEventTcs.Task.WaitAsync(TestContext.Current.CancellationToken);

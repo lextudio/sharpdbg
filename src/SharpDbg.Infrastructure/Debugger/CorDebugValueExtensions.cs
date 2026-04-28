@@ -49,7 +49,8 @@ public static class CorDebugValueExtensions
 			szStringResult = ClrDebug.Extensions.CreateString(chArray, pcchString + 1);
 			return (HRESULT) num;
 		}
-		szStringResult = (string) null;
+
+		szStringResult = null!;
 		return (HRESULT) num;
 	}
 

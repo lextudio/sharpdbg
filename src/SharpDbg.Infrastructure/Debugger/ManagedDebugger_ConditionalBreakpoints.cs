@@ -41,19 +41,19 @@ public partial class ManagedDebugger
 		// ">10" - break when hit count is > 10
 		// "%10" - break every 10th hit (modulo)
 
-		hitCondition = hitCondition.Trim();
-		var hitConditionSpan = hitCondition.AsSpan();
-		return hitConditionSpan switch
-		{
-			['>', '=', ..] => int.TryParse(hitConditionSpan[2..], out var threshold) && hitCount >= threshold,
-			['>', ..] => int.TryParse(hitConditionSpan[1..], out var threshold) && hitCount > threshold,
-			['<', '=', ..] => int.TryParse(hitConditionSpan[2..], out var threshold) && hitCount <= threshold,
-			['<', ..] => int.TryParse(hitConditionSpan[1..], out var threshold) && hitCount < threshold,
-			['%', ..] => int.TryParse(hitConditionSpan[1..], out var modulo) && modulo > 0 && hitCount % modulo == 0,
-			['=', '=', ..] => int.TryParse(hitConditionSpan[2..], out var target) && hitCount == target,
-			_ => int.TryParse(hitConditionSpan, out var target) && hitCount == target // Plain number means break when hit count = number
-		};
-	}
+			hitCondition = hitCondition.Trim();
+			var hitConditionSpan = hitCondition.AsSpan();
+			return hitConditionSpan switch
+			{
+				['>', '=', ..] => int.TryParse(hitCondition.Substring(2), out var threshold) && hitCount >= threshold,
+				['>', ..] => int.TryParse(hitCondition.Substring(1), out var threshold) && hitCount > threshold,
+				['<', '=', ..] => int.TryParse(hitCondition.Substring(2), out var threshold) && hitCount <= threshold,
+				['<', ..] => int.TryParse(hitCondition.Substring(1), out var threshold) && hitCount < threshold,
+				['%', ..] => int.TryParse(hitCondition.Substring(1), out var modulo) && modulo > 0 && hitCount % modulo == 0,
+				['=', '=', ..] => int.TryParse(hitCondition.Substring(2), out var target) && hitCount == target,
+				_ => int.TryParse(hitCondition, out var target) && hitCount == target // Plain number means break when hit count = number
+			};
+		}
 
 	/// <summary>
 	/// Check if a debug value is truthy (true, non-zero, non-null)

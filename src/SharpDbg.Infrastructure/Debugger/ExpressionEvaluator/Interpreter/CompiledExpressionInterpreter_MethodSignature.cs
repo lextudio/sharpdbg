@@ -47,7 +47,7 @@ public partial class CompiledExpressionInterpreter
 		public SignatureTypeCode TypeCode { get; set; }
 		public int Token { get; set; } // For class/valuetype
 		public TypeInfo? ElementType { get; set; } // For arrays, pointers, etc.
-		public List<TypeInfo> GenericArguments { get; set; } // For generic types
+		public List<TypeInfo> GenericArguments { get; set; } = []; // For generic types
 	}
 
 	private static TypeInfo DecodeType(ref BlobReader reader)

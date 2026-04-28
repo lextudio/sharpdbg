@@ -22,11 +22,11 @@ public partial class ManagedDebugger
 		}
 		var corDebugIlFrame = GetFrameForThreadIdAndStackDepth(threadId, stackDepth);
 		if (corDebugIlFrame.LocalVariables.Length is 0) return;
-		foreach (var (index, localVariableCorDebugValue) in corDebugIlFrame.LocalVariables.Index())
+		foreach (var entry in corDebugIlFrame.LocalVariables.WithIndex())
 		{
-			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, index);
+			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, entry.index);
 			if (localVariableName is null) continue; // Compiler generated locals will not be found. E.g. DefaultInterpolatedStringHandler
-			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(localVariableCorDebugValue, threadId, stackDepth);
+			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(entry.item, threadId, stackDepth);
 			VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : null;
 			var variableInfo = new VariableInfo
 			{
@@ -34,7 +34,7 @@ public partial class ManagedDebugger
 				Value = value,
 				Type = friendlyTypeName,
 				PresentationHint = variablePresentationHint,
-				VariablesReference = GetVariablesReference(localVariableCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+				VariablesReference = GetVariablesReference(entry.item, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
 			};
 			result.Add(variableInfo);
 		}
@@ -109,15 +109,15 @@ public partial class ManagedDebugger
 			}
 		}
 		var skipCount = isStatic ? 0 : 1; // Skip 'this' for instance methods, as we already handled it
-		foreach (var (index, argumentCorDebugValue) in corDebugIlFrame.Arguments.Skip(skipCount).Index())
+		foreach (var entry in corDebugIlFrame.Arguments.Skip(skipCount).WithIndex())
 		{
 			// index 0 is the return value, so we add 1 to get to the arguments
 			// GetParamForMethodIndex does not include the instance 'this' parameter
-			var paramDef = metadataImport!.GetParamForMethodIndex(corDebugFunction.Token, index + 1);
+			var paramDef = metadataImport!.GetParamForMethodIndex(corDebugFunction.Token, entry.index + 1);
 			var paramProps = metadataImport.GetParamProps(paramDef);
 			var argumentName = paramProps.szName;
 			if (argumentName is null) continue;
-			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(argumentCorDebugValue, threadId, stackDepth);
+			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(entry.item, threadId, stackDepth);
 			VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : null;
 			var variableInfo = new VariableInfo
 			{
@@ -125,7 +125,7 @@ public partial class ManagedDebugger
 				Value = value,
 				Type = friendlyTypeName,
 				PresentationHint = variablePresentationHint,
-				VariablesReference = GetVariablesReference(argumentCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+				VariablesReference = GetVariablesReference(entry.item, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
 			};
 			result.Add(variableInfo);
 		}
@@ -142,7 +142,7 @@ public partial class ManagedDebugger
 		}
 		else if (unwrappedDebugValue is CorDebugObjectValue objectValue)
 		{
-			var isNullableStruct = friendlyTypeName.EndsWith('?');
+			var isNullableStruct = friendlyTypeName.EndsWith("?", StringComparison.Ordinal);
 			if (isNullableStruct)
 			{
 				var underlyingValueOrNull = GetUnderlyingValueOrNullFromNullableStruct(objectValue);
@@ -384,14 +384,14 @@ public partial class ManagedDebugger
 
 		// Get the elements first, as the CorDebugArrayValue arrayValue may get neutered during 'await GetValueForCorDebugValueAsync' below, if any evals are required
 		var elements = ValueEnumerable.Range(0, itemCount).Select(i => arrayValue.GetElement(1, [i])).ToArray();
-		foreach (var (i, element) in elements.Index())
+		foreach (var entry in elements.WithIndex())
 		{
-			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(element, threadId, stackDepth);
+			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(entry.item, threadId, stackDepth);
 			VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : new VariablePresentationHint { Kind = PresentationHintKind.Data };
-			var variableReference = GetVariablesReference(element, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance);
+			var variableReference = GetVariablesReference(entry.item, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance);
 			var variableInfo = new VariableInfo
 			{
-				Name = $"[{i}]",
+				Name = $"[{entry.index}]",
 				Type = friendlyTypeName,
 				Value = value,
 				PresentationHint = variablePresentationHint,

@@ -73,19 +73,33 @@ public static class DebugAdapterProcessHelper
 		};
 	}
 
-	public static AttachRequest GetAttachRequest(int processId, bool justMyCode = true)
+	public static LaunchRequest GetLaunchRequest(string program, string[] args, string? runtimeFlavor = null)
 	{
-		return new AttachRequest
+		var props = new Dictionary<string, JToken>
 		{
-			ConfigurationProperties = new Dictionary<string, JToken>
-			{
-				["name"] = "AttachRequestName",
-				["type"] = "coreclr",
-				["processId"] = processId,
-				["console"] = "internalConsole", // integratedTerminal, externalTerminal, internalConsole
-				["justMyCode"] = justMyCode
-			}
+			["name"] = "LaunchRequestName",
+			["type"] = "coreclr",
+			["program"] = program,
+			["args"] = JToken.FromObject(args),
 		};
+		if (runtimeFlavor is not null)
+			props["runtimeFlavor"] = runtimeFlavor;
+		return new LaunchRequest { ConfigurationProperties = props };
+	}
+
+	public static AttachRequest GetAttachRequest(int processId, bool justMyCode = true, string? runtimeFlavor = null)
+	{
+		var props = new Dictionary<string, JToken>
+		{
+			["name"] = "AttachRequestName",
+			["type"] = "coreclr",
+			["processId"] = processId,
+			["console"] = "internalConsole",
+			["justMyCode"] = justMyCode
+		};
+		if (runtimeFlavor is not null)
+			props["runtimeFlavor"] = runtimeFlavor;
+		return new AttachRequest { ConfigurationProperties = props };
 	}
 
 	public static SetBreakpointsRequest GetSetBreakpointsRequest(int? line = null, string? filePath = null)

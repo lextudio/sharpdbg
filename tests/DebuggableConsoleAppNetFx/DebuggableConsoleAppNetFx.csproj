@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net481</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <!-- Match the host process architecture so ICorDebug works across the debugger/debuggee boundary -->
+    <PlatformTarget Condition="'$(PROCESSOR_ARCHITECTURE)' == 'ARM64'">ARM64</PlatformTarget>
+    <PlatformTarget Condition="'$(PROCESSOR_ARCHITECTURE)' == 'AMD64'">x64</PlatformTarget>
+    <PlatformTarget Condition="'$(PROCESSOR_ARCHITECTURE)' == 'x86'">x86</PlatformTarget>
+  </PropertyGroup>
+
+</Project>

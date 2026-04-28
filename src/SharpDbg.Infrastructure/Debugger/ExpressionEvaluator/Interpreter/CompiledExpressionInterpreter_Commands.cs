@@ -278,11 +278,12 @@ public partial class CompiledExpressionInterpreter
 			if (args[i] == null)
 				continue;
 
-			var argType = args[i].ExactType?. Type ??  args[i].Type; // Get the actual type
+			var argValue = args[i]!;
+			var argType = argValue.ExactType?.Type ?? argValue.Type; // Get the actual type
 
-			if (!IsTypeMatch(parameterTypes[i], argType, args[i]))
+			if (!IsTypeMatch(parameterTypes[i], argType, argValue))
 				return false;
-		}
+			}
 
 		return true;
 	}
@@ -397,11 +398,17 @@ public partial class CompiledExpressionInterpreter
 			evalStack.RemoveFirst();
 		}
 
-		foreach (var value in components)
-		{
-			var unwrapped = value.UnwrapDebugValue();
-			if (unwrapped == null || unwrapped is CorDebugReferenceValue { IsNull: true })
+			foreach (var value in components)
 			{
+				if (value is null)
+				{
+					stringBuilder.Append("null");
+					continue;
+				}
+
+				var unwrapped = value.UnwrapDebugValue();
+				if (unwrapped == null || unwrapped is CorDebugReferenceValue { IsNull: true })
+				{
 				stringBuilder.Append("null");
 			}
 			else if (unwrapped is CorDebugStringValue stringValue)

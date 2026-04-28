@@ -66,14 +66,17 @@ public class PortablePdbWriter2
 		Stream targetStream,
 		bool noLogo = false,
 		BlobContentId? pdbId = null,
-		IProgress<DecompilationProgress> progress = null,
+		IProgress<DecompilationProgress>? progress = null,
 		string currentProgressTitle = "Generating portable PDB...",
 		int maxDegreeOfParallelism = -1,
 		CancellationToken cancellationToken = default)
 	{
 		MetadataBuilder metadata = new MetadataBuilder();
 		MetadataReader reader = file.Metadata;
-		var entrypointHandle = MetadataTokens.MethodDefinitionHandle(file.Reader.PEHeaders.CorHeader.EntryPointTokenOrRelativeVirtualAddress);
+		var corHeader = file.Reader.PEHeaders.CorHeader;
+		var entrypointHandle = corHeader is null
+			? default
+				: MetadataTokens.MethodDefinitionHandle(corHeader.EntryPointTokenOrRelativeVirtualAddress);
 
 		var sequencePointBlobs = new Dictionary<MethodDefinitionHandle, (DocumentHandle Document, BlobHandle SequencePoints)>();
 		var localScopes = new List<(MethodDefinitionHandle Method, ImportScopeInfo Import, int Offset, int Length, HashSet<ILVariable> Locals)>();
@@ -166,7 +169,7 @@ public class PortablePdbWriter2
 				var method = function.MoveNextMethod ?? function.Method;
 				var methodHandle = (MethodDefinitionHandle)method.MetadataToken;
 				result.SequencePoints.TryGetValue(function, out var points);
-				ProcessMethod(methodHandle, document, points, result.SyntaxTree);
+				ProcessMethod(methodHandle, document, points ?? new List<SequencePoint>(), result.SyntaxTree);
 				if (function.MoveNextMethod != null)
 				{
 					stateMachineMethods.Add((
@@ -221,7 +224,10 @@ public class PortablePdbWriter2
 			foreach (var local in localScope.Locals.OrderBy(l => l.Index))
 			{
 				var localVarName = local.Name != null ? metadata.GetOrAddString(local.Name) : default;
-				metadata.AddLocalVariable(LocalVariableAttributes.None, local.Index.Value, localVarName);
+				if (local.Index.HasValue)
+				{
+					metadata.AddLocalVariable(LocalVariableAttributes.None, local.Index.Value, localVarName);
+				}
 			}
 
 			metadata.AddLocalScope(localScope.Method, localScope.Import.Handle, firstLocalVariable,
@@ -248,7 +254,8 @@ public class PortablePdbWriter2
 		{
 			var debugDir = file.Reader.ReadDebugDirectory().LastOrDefault(dir => dir.Type == DebugDirectoryEntryType.CodeView);
 			var portable = file.Reader.ReadCodeViewDebugDirectoryData(debugDir);
-			Debug.Assert(!portable.Path.EndsWith(".ni.pdb"));
+			var portablePath = portable.Path ?? string.Empty;
+			Debug.Assert(!portablePath.EndsWith(".ni.pdb"));
 			pdbId = new BlobContentId(portable.Guid, debugDir.Stamp);
 		}
 
@@ -279,13 +286,13 @@ public class PortablePdbWriter2
 			// Check if sequence points were already processed - ILFunction gets defined in C# twice:
 			// This may happen if a compiler-generated function gets transformed into a lambda expression,
 			// but its method definition is not removed from the syntax tree.
-			if (!sequencePointBlobs.ContainsKey(method))
-			{
-				if (sequencePoints?.Count > 0)
-					sequencePointBlobs.Add(method, (document, EncodeSequencePoints(metadata, localSignatureRowId, sequencePoints)));
-				else
-					sequencePointBlobs.Add(method, (default, default));
-			}
+				if (!sequencePointBlobs.ContainsKey(method))
+				{
+					if (sequencePoints.Count > 0)
+						sequencePointBlobs.Add(method, (document, EncodeSequencePoints(metadata, localSignatureRowId, sequencePoints)));
+					else
+						sequencePointBlobs.Add(method, (default, default));
+				}
 			else
 			{
 				Debug.Assert(false, "Duplicate sequence point definition detected: " + MetadataTokens.GetToken(method).ToString("X8"));
