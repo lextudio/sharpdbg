@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using ClrDebug;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Interpreter;
@@ -305,9 +306,9 @@ public partial class ManagedDebugger
 		OnStopped?.Invoke(corThread.Id, "pause");
 	}
 
-	private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs exceptionCorDebugManagedCallbackEventArgs)
+	private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs ev)
 	{
-		var corThread = exceptionCorDebugManagedCallbackEventArgs.Thread;
+		var corThread = ev.Thread;
 		IsRunning = false;
 		_asyncStepper?.Disable();
 		if (_stepper is not null)
@@ -316,7 +317,132 @@ public partial class ManagedDebugger
 			_stepper = null;
 		}
 
+		try
+		{
+			var frames = GetStackTrace(corThread.Id);
+			var stackTrace = string.Join("\n", frames.Select(f => f.Name + (f.Source != null ? $" at {f.Source}:{f.Line}" : string.Empty)));
+
+			CorDebugValue? exceptionValue = null;
+			string? typeName = null;
+			string? fullTypeName = null;
+			string? message = null;
+
+			try
+			{
+				exceptionValue = corThread.CurrentException;
+			}
+			catch (Exception ex2)
+			{
+				_logger?.Invoke($"Error getting current exception: {ex2.Message}");
+			}
+
+			if (exceptionValue is not null)
+			{
+				try
+				{
+					var objectValue = exceptionValue.UnwrapDebugValueToObject();
+					fullTypeName = GetCorDebugTypeFriendlyName(objectValue.ExactType);
+					var lastDot = fullTypeName.LastIndexOf('.');
+					typeName = lastDot >= 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
+					message = TryReadExceptionMessage(objectValue);
+					_logger?.Invoke($"Exception: {fullTypeName}: {message ?? "(no message)"}");
+				}
+				catch (Exception ex3)
+				{
+					_logger?.Invoke($"Error reading exception details: {ex3.Message}");
+				}
+			}
+
+			StoreExceptionForThread(corThread.Id, message, typeName, fullTypeName, $"$exception{corThread.Id}", stackTrace, exceptionValue);
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"Error capturing exception info: {ex.Message}");
+			StoreExceptionForThread(corThread.Id, null, null, null, null, null, null);
+		}
+
 		OnStopped?.Invoke(corThread.Id, "exception");
+	}
+
+	private void HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs ev)
+	{
+		var corThread = ev.Thread;
+		IsRunning = false;
+		_asyncStepper?.Disable();
+		if (_stepper is not null)
+		{
+			_stepper.Deactivate();
+			_stepper = null;
+		}
+
+		try
+		{
+			var frames = GetStackTrace(corThread.Id);
+			var stackTrace = string.Join("\n", frames.Select(f => f.Name + (f.Source != null ? $" at {f.Source}:{f.Line}" : string.Empty)));
+
+			CorDebugValue? exceptionValue = null;
+			string? typeName = null;
+			string? fullTypeName = null;
+			string? message = null;
+
+			try
+			{
+				exceptionValue = corThread.CurrentException;
+			}
+			catch (Exception ex2)
+			{
+				_logger?.Invoke($"Error getting current exception: {ex2.Message}");
+			}
+
+			if (exceptionValue is not null)
+			{
+				try
+				{
+					var objectValue = exceptionValue.UnwrapDebugValueToObject();
+					fullTypeName = GetCorDebugTypeFriendlyName(objectValue.ExactType);
+					var lastDot = fullTypeName.LastIndexOf('.');
+					typeName = lastDot >= 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
+					message = TryReadExceptionMessage(objectValue);
+					_logger?.Invoke($"Exception2 ({ev.EventType}): {fullTypeName}: {message ?? "(no message)"}");
+				}
+				catch (Exception ex3)
+				{
+					_logger?.Invoke($"Error reading exception details: {ex3.Message}");
+				}
+			}
+
+			StoreExceptionForThread(corThread.Id, message, typeName, fullTypeName, $"$exception{corThread.Id}", stackTrace, exceptionValue);
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"Error capturing exception info (Exception2): {ex.Message}");
+			StoreExceptionForThread(corThread.Id, null, null, null, null, null, null);
+		}
+
+		OnStopped?.Invoke(corThread.Id, "exception");
+	}
+
+	private static string? TryReadExceptionMessage(CorDebugObjectValue exObj)
+	{
+		var currentType = exObj.ExactType;
+		while (currentType?.Class != null)
+		{
+			try
+			{
+				var metadataImport = currentType.Class.Module.GetMetaDataInterface().MetaDataImport;
+				var fieldDef = metadataImport.EnumFieldsWithName(currentType.Class.Token, "_message").FirstOrDefault();
+				if (!fieldDef.IsNil)
+				{
+					var fieldValue = exObj.GetFieldValue(currentType.Class.Raw, fieldDef);
+					var unwrapped = fieldValue.UnwrapDebugValue();
+					if (unwrapped is CorDebugStringValue sv)
+						return sv.GetStringWithoutBug(sv.Length + 1);
+				}
+			}
+			catch { }
+			currentType = currentType.Base;
+		}
+		return null;
 	}
 
 	private void TryArmStopAtEntryBreakpoint(ModuleInfo moduleInfo)

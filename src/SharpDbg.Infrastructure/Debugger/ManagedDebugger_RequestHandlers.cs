@@ -298,6 +298,9 @@ public partial class ManagedDebugger
 		_logger?.Invoke("Continue");
 		if (_rawProcess != null)
 		{
+			// Clear any cached exception info when execution is resumed
+			ClearAllThreadExceptions();
+
 			IsRunning = true;
 			_variableManager.ClearAndDisposeHandleValues();
 			_rawProcess.Continue(false);
@@ -589,6 +592,20 @@ public partial class ManagedDebugger
 			VariablesReference = localsRef,
 			Expensive = false
 		});
+
+			// If an exception was recorded for this thread, expose it as an "Exception" scope
+			var excState = GetExceptionInfoForThread(variablesReference.Value.ThreadId.Value);
+			if (excState is not null && excState.ExceptionValue is not null)
+			{
+				var excRef = _variableManager.CreateReference(new VariablesReference(StoredReferenceKind.StackVariable, excState.ExceptionValue, variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth, null));
+				_logger?.Invoke($"Created Exception scope variablesReference={excRef} for thread {variablesReference.Value.ThreadId.Value}");
+				result.Add(new ScopeInfo
+				{
+					Name = "Exception",
+					VariablesReference = excRef,
+					Expensive = false
+				});
+			}
 		return result;
 	}
 
@@ -666,6 +683,48 @@ public partial class ManagedDebugger
 	public async Task<(string result, string? type, int variablesReference)> Evaluate(string expression, int? frameId)
 	{
 		_logger?.Invoke($"Evaluate: {expression}");
+
+		// Special-case: evaluate the stored exception object for a thread using the synthetic expression
+		if (!string.IsNullOrEmpty(expression) && expression.StartsWith("$exception"))
+		{
+			// expression may be "$exception" or "$exception{threadId}"
+			var suffix = expression.Substring("$exception".Length);
+			int parsedThreadId = 0;
+			if (!string.IsNullOrEmpty(suffix) && int.TryParse(suffix, out var tmp)) parsedThreadId = tmp;
+
+			ExceptionState? state = null;
+			if (parsedThreadId != 0)
+			{
+				state = GetExceptionInfoForThread(parsedThreadId);
+			}
+			else if (frameId.HasValue && frameId.Value != 0)
+			{
+				var frameRef = _variableManager.GetReference(frameId.Value);
+				if (frameRef.HasValue && frameRef.Value.ThreadId.Value > 0)
+				{
+					state = GetExceptionInfoForThread(frameRef.Value.ThreadId.Value);
+				}
+			}
+
+			if (state is not null && state.ExceptionValue is not null)
+			{
+				int targetThreadId = parsedThreadId;
+				if (targetThreadId == 0 && frameId.HasValue && frameId.Value != 0)
+				{
+					var frameRef = _variableManager.GetReference(frameId.Value);
+					if (frameRef.HasValue && frameRef.Value.ThreadId.Value > 0)
+					{
+						targetThreadId = frameRef.Value.ThreadId.Value;
+					}
+				}
+				var exceptionVariablesReference = GenerateUniqueVariableReference(state.ExceptionValue, new ThreadId(targetThreadId), new FrameStackDepth(0), null);
+				var exceptionFriendlyTypeName = state.FullTypeName ?? state.TypeName ?? "Exception";
+				var resultString = state.Message ?? exceptionFriendlyTypeName;
+				return (resultString, exceptionFriendlyTypeName, exceptionVariablesReference);
+			}
+			return ("<no exception>", null, 0);
+		}
+
 		if (frameId is null or 0) throw new InvalidOperationException("Frame ID is required for evaluation");
 
 		var variablesReference = _variableManager.GetReference(frameId.Value);
