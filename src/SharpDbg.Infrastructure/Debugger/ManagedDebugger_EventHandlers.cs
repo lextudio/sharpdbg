@@ -345,13 +345,16 @@ public partial class ManagedDebugger
 					var lastDot = fullTypeName.LastIndexOf('.');
 					typeName = lastDot >= 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
 					message = TryReadExceptionMessage(objectValue);
-					_logger?.Invoke($"Exception: {fullTypeName}: {message ?? "(no message)"}");
 				}
 				catch (Exception ex3)
 				{
 					_logger?.Invoke($"Error reading exception details: {ex3.Message}");
 				}
 			}
+
+			if (fullTypeName != null)
+				_logger?.Invoke($"Unhandled exception: {fullTypeName}{(message != null ? $": {message}" : "")}");
+			_logger?.Invoke($"Exception call stack:\n{stackTrace}");
 
 			StoreExceptionForThread(corThread.Id, message, typeName, fullTypeName, $"$exception{corThread.Id}", stackTrace, exceptionValue);
 		}
@@ -403,13 +406,16 @@ public partial class ManagedDebugger
 					var lastDot = fullTypeName.LastIndexOf('.');
 					typeName = lastDot >= 0 ? fullTypeName.Substring(lastDot + 1) : fullTypeName;
 					message = TryReadExceptionMessage(objectValue);
-					_logger?.Invoke($"Exception2 ({ev.EventType}): {fullTypeName}: {message ?? "(no message)"}");
 				}
 				catch (Exception ex3)
 				{
 					_logger?.Invoke($"Error reading exception details: {ex3.Message}");
 				}
 			}
+
+			if (fullTypeName != null)
+				_logger?.Invoke($"Unhandled exception: {fullTypeName}{(message != null ? $": {message}" : "")} ({ev.EventType})");
+			_logger?.Invoke($"Exception call stack:\n{stackTrace}");
 
 			StoreExceptionForThread(corThread.Id, message, typeName, fullTypeName, $"$exception{corThread.Id}", stackTrace, exceptionValue);
 		}
