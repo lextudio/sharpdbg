@@ -369,15 +369,6 @@ public partial class ManagedDebugger
 
 	private void HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs ev)
 	{
-		// First-chance exceptions are already handled by HandleException; only stop on unhandled exceptions.
-		// Stopping twice on the same exception (once in HandleException and again here for FIRST_CHANCE)
-		// causes the CLR to be stopped while a debugger-display evaluation is in flight, deadlocking it.
-		if (ev.EventType != CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED)
-		{
-			ev.Controller.Continue(false);
-			return;
-		}
-
 		var corThread = ev.Thread;
 		IsRunning = false;
 		_asyncStepper?.Disable();
