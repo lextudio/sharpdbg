@@ -256,6 +256,11 @@ public partial class ManagedDebugger
 
 	private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs exceptionCorDebugManagedCallbackEventArgs)
 	{
+		if (EvalStatus.IsRunning)
+		{
+			ContinueProcess();
+			return;
+		}
 		var corThread = exceptionCorDebugManagedCallbackEventArgs.Thread;
 		IsRunning = false;
 		_asyncStepper?.Disable();

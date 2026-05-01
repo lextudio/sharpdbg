@@ -84,7 +84,7 @@ public static class CorDebugValueExtensions
 		return fieldCorDebugValue;
 	}
 
-	public static async Task<CorDebugValue?> GetPropertyValue(this CorDebugValue objectValue, CorDebugILFrame ilFrame, CorDebugManagedCallback callback, string propertyName)
+	public static async Task<CorDebugValue?> GetPropertyValue(this CorDebugValue objectValue, CorDebugManagedCallback callback, EvalStatus evalStatus, CorDebugILFrame ilFrame, string propertyName)
 	{
 		var unwrappedValue = objectValue.UnwrapDebugValueToObject();
 		var corDebugClass = unwrappedValue.Class;
@@ -115,7 +115,7 @@ public static class CorDebugValueExtensions
 		// For instance properties, pass the object; for static, pass nothing. Must pass the original CorDebugReferenceValue, not the dereferenced one.
 		ICorDebugValue[] corDebugValues = isStatic ? [] : [objectValue!.Raw];
 
-		var returnValue = await eval.CallParameterizedFunctionAsync(callback, getMethod, typeParameterTypes.Length, typeParameterArgs, corDebugValues.Length, corDebugValues);
+		var returnValue = await eval.CallParameterizedFunctionAsync(callback, evalStatus, getMethod, typeParameterTypes.Length, typeParameterArgs, corDebugValues.Length, corDebugValues);
 		return returnValue;
 	}
 

@@ -40,7 +40,7 @@ public partial class CompiledExpressionInterpreter
 	private async Task<CorDebugValue> CreateValueType(CorDebugClass valueTypeClass, byte[]? valueData)
 	{
 		var eval = _context.Thread.CreateEval();
-		var corValue = await eval.NewParameterizedObjectNoConstructorAsync(_debuggerManagedCallback, valueTypeClass, 0, null);
+		var corValue = await eval.NewParameterizedObjectNoConstructorAsync(_debuggerManagedCallback, _debugger.EvalStatus, valueTypeClass, 0, null);
 
 		if (valueData != null && corValue != null)
 		{
@@ -63,6 +63,6 @@ public partial class CompiledExpressionInterpreter
 	private async Task<CorDebugValue> CreateString(string str)
 	{
 		var eval = _context.Thread.CreateEval();
-		return await eval.NewStringAsync(_debuggerManagedCallback, str);
+		return await eval.NewStringAsync(_debuggerManagedCallback, _debugger.EvalStatus, str);
 	}
 }

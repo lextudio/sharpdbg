@@ -350,7 +350,7 @@ public partial class ManagedDebugger
 			// For instance properties, pass the object; for static, pass nothing
 			ICorDebugValue[] corDebugValues = isStatic ? [] : [corDebugValue!.Raw];
 
-			var returnValue = await eval.CallParameterizedFunctionAsync(_callbacks, getMethod, typeParameterTypes.Length, typeParameterArgs, corDebugValues.Length, corDebugValues);
+			var returnValue = await eval.CallParameterizedFunctionAsync(_callbacks, EvalStatus, getMethod, typeParameterTypes.Length, typeParameterArgs, corDebugValues.Length, corDebugValues);
 
 			if (returnValue is null) continue;
 			if (debuggerBrowsableRootHidden)

@@ -120,7 +120,7 @@ public partial class ManagedDebugger
 		var fieldValue = unwrappedThisValue.GetClassFieldValue(frame, identifier);
 		if (fieldValue is not null) return fieldValue;
 
-		var propertyValue = await instanceMethodImplicitThisValue.GetPropertyValue(frame, _callbacks, identifier);
+		var propertyValue = await instanceMethodImplicitThisValue.GetPropertyValue(_callbacks, EvalStatus, frame, identifier);
 		if (propertyValue is not null) return propertyValue;
 		return null;
 	}
@@ -159,7 +159,7 @@ public partial class ManagedDebugger
 		var ilFrame = GetFrameForThreadIdAndStackDepth(threadId, stackDepth);
 		var eval = ilFrame.Chain.Thread.CreateEval();
 		// currently only working for non-generic classes
-		var value = await eval.NewParameterizedObjectNoConstructorAsync(_callbacks, corDebugClass, 0, null);
+		var value = await eval.NewParameterizedObjectNoConstructorAsync(_callbacks, EvalStatus, corDebugClass, 0, null);
 		return value;
 	}
 

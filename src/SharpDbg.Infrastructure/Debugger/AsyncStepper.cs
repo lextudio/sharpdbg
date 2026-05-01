@@ -103,6 +103,7 @@ public class AsyncStepper
 			// result should be null, as SetNotificationForWaitCompletion returns void
 			var result = await eval.CallParameterizedFunctionAsync(
 				_managedCallback,
+				_debugger.EvalStatus,
 				function,
 				typeParameterArgs.Length,
 				typeParameterArgs,
@@ -540,6 +541,7 @@ public class AsyncStepper
 		// Call ObjectIdForDebugger getter
 		var result = await eval.CallParameterizedFunctionAsync(
 			_managedCallback,
+			_debugger.EvalStatus,
 			getMethod,
 			builder.ExactType.TypeParameters.Length,
 			builder.ExactType.TypeParameters.Select(t => t.Raw).ToArray(),

@@ -39,6 +39,7 @@ public partial class ManagedDebugger : IDisposable
 	public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
 
 	public bool IsRunning { get; private set; }
+	public EvalStatus EvalStatus { get; }
 	private CorDebugProcess? _rawProcess;
 
 	public ManagedDebugger(Action<string>? logger = null)
@@ -47,6 +48,7 @@ public partial class ManagedDebugger : IDisposable
 		_breakpointManager = new BreakpointManager();
 		_variableManager = new VariableManager();
 		_callbacks = new CorDebugManagedCallback();
+		EvalStatus = new EvalStatus();
 		_asyncStepper = new AsyncStepper(_modules, _callbacks, this);
 
 		// Subscribe to callback events
@@ -301,4 +303,9 @@ public partial class ManagedDebugger : IDisposable
 		_asyncStepper?.Dispose();
 		_asyncStepper = null;
 	}
+}
+
+public class EvalStatus
+{
+	public bool IsRunning { get; set; }
 }
