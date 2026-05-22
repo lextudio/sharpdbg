@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using Ardalis.GuardClauses;
 using SharpDbg.Application;
 
 namespace SharpDbg.Cli.Tests.Helpers;
@@ -30,10 +31,12 @@ public class OopOrInProcDebugAdapter : IDisposable
 	private readonly DebugAdapter? _debugAdapter;
 	public OopOrInProcDebugAdapter(Process process)
 	{
+		Guard.Against.Null(process);
 		_process = process;
 	}
 	public OopOrInProcDebugAdapter(DebugAdapter debugAdapter)
 	{
+		Guard.Against.Null(debugAdapter);
 		_debugAdapter = debugAdapter;
 	}
 
@@ -47,13 +50,13 @@ public class OopOrInProcDebugAdapter : IDisposable
 				try
 				{
 					_process.Kill(entireProcessTree: true);
-					_process.Dispose();
 				}
 				catch (Exception)
 				{
 					// Ignore exceptions during process kill
 				}
 			}
+			_process.Dispose();
 		}
 	}
 }
