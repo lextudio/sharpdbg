@@ -17,14 +17,6 @@ public static class InMemoryDebugAdapterHelper
 		adapter.Initialize(stdInClient, stdOutServer);
 		adapter.Protocol.VerifySynchronousOperationAllowed();
 		adapter.Protocol.Run();
-		_ = Task.Run(() =>
-		{
-			adapter.Protocol.WaitForReader();
-			stdInServer.Dispose();
-			stdInClient.Dispose();
-			stdOutServer.Dispose();
-			stdOutClient.Dispose();
-		});
 
 		var disposable = new InMemoryDebugAdapterDisposable(stdInServer, stdOutServer, stdInClient, stdOutClient, adapter);
 		return (stdInServer, stdOutClient, disposable);
