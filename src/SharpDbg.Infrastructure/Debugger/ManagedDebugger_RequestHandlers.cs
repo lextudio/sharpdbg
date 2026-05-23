@@ -609,7 +609,7 @@ public partial class ManagedDebugger
 		}
 		else
 		{
-			if (_process != null && _isAttached && _process.IsRunning)
+			if (_process != null && _isAttached && _process?.TryIsRunning(out var isRunning) is HRESULT.S_OK && isRunning)
 			{
 				_process.Stop(0);
 			}
