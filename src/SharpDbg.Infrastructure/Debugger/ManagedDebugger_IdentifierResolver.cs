@@ -61,6 +61,13 @@ public partial class ManagedDebugger
 	private CorDebugValue? ResolveIdentifierAsStackVariable(string identifier, ThreadId threadId, FrameStackDepth stackDepth, out CorDebugValue? instanceMethodImplicitThisValue)
 	{
 		instanceMethodImplicitThisValue = null;
+
+		if (identifier == "$exception")
+		{
+			var currentThread = _process!.GetThread(threadId.Value);
+			return currentThread.CurrentException;
+		}
+
 		var frame = GetFrameForThreadIdAndStackDepth(threadId, stackDepth);
 		var corDebugFunction = frame.Function;
 		var module = _modules[corDebugFunction.Module.BaseAddress];
