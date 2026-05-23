@@ -18,9 +18,11 @@ public static partial class TestHelper
 			var topFrame = stackTraceResponse.StackFrames.Single();
 			var filePath = topFrame.Source.Path;
 			var line = topFrame.Line;
+			var column = topFrame.Column;
 			var source = new Source { Path = filePath };
 			additionalProperties["source"] = JToken.FromObject(source);
 			additionalProperties["line"] = JToken.FromObject(line);
+			additionalProperties["column"] = JToken.FromObject(column);
 		}
 	}
 }
