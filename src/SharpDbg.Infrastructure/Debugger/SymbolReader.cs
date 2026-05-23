@@ -298,7 +298,7 @@ public partial class SymbolReader : IDisposable
 		return namespaces.ToImmutable();
 	}
 
-	public string? GetLocalVariableName(int methodToken, int localIndex)
+	public string? GetLocalVariableName(int methodToken, int localIndex, int currentIlOffset)
 	{
 		var methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
 
@@ -306,6 +306,10 @@ public partial class SymbolReader : IDisposable
 		foreach (var scopeHandle in localScopes)
 		{
 			var scope = _reader.GetLocalScope(scopeHandle);
+
+			// Only consider scopes that are active at the current IL offset
+			if (currentIlOffset < scope.StartOffset || currentIlOffset >= scope.StartOffset + scope.Length)
+				continue;
 
 			foreach (var variableHandle in scope.GetLocalVariables())
 			{

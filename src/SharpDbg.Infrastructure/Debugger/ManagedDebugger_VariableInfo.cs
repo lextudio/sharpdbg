@@ -22,9 +22,10 @@ public partial class ManagedDebugger
 		}
 		var corDebugIlFrame = GetFrameForThreadIdAndStackDepth(threadId, stackDepth);
 		if (corDebugIlFrame.LocalVariables.Length is 0) return;
+		var currentIlOffset = corDebugIlFrame.IP.pnOffset;
 		foreach (var (index, localVariableCorDebugValue) in corDebugIlFrame.LocalVariables.Index())
 		{
-			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, index);
+			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, index, currentIlOffset);
 			if (localVariableName is null) continue; // Compiler generated locals will not be found. E.g. DefaultInterpolatedStringHandler
 			var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(localVariableCorDebugValue, threadId, stackDepth);
 			VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : null;

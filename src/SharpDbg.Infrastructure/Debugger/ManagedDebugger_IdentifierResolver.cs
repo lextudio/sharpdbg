@@ -64,10 +64,11 @@ public partial class ManagedDebugger
 		var frame = GetFrameForThreadIdAndStackDepth(threadId, stackDepth);
 		var corDebugFunction = frame.Function;
 		var module = _modules[corDebugFunction.Module.BaseAddress];
+		var currentIlOffset = frame.IP.pnOffset;
 
 		foreach (var (index, local) in frame.LocalVariables.Index())
 		{
-			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, index);
+			var localVariableName = module.SymbolReader?.GetLocalVariableName(corDebugFunction.Token, index, currentIlOffset);
 			if (localVariableName is null) continue; // Compiler generated locals will not be found. E.g. DefaultInterpolatedStringHandler
 			if (localVariableName == identifier)
 			{
