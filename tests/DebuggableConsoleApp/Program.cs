@@ -22,6 +22,7 @@ public static class Program
 			myClassNoMembers.MyMethod(42);
 			hitConditionClass.Test();
 			var asyncResult = myAsyncClass.MyMethodAsync(4).GetAwaiter().GetResult();
+			Exceptions.Test();
 			Thread.Sleep(100);
 			//await Task.Delay(500);
 		}
