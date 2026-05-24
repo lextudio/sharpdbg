@@ -38,7 +38,7 @@ public static partial class TestHelper
 		var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		var debugEventTcs = new TcsContainer { Tcs = new TaskCompletionSource<DebugEvent>(TaskCreationOptions.RunContinuationsAsynchronously) };
 		debugProtocolHost.RegisterEventType<StoppedEvent>(@event => debugEventTcs.Tcs.TrySetResult(@event));
-		//debugProtocolHost.RegisterEventType<BreakpointEvent>(@event => debugEventTcs.Tcs.TrySetResult(@event));
+		debugProtocolHost.RegisterEventType<BreakpointEvent>(@event => debugEventTcs.Tcs.TrySetResult(@event));
 		debugProtocolHost.Run();
 		return (debugProtocolHost, initializedEventTcs, debugEventTcs, debugAdapterDisposable, debuggableProcess);
 	}
