@@ -199,13 +199,13 @@ public class AsyncStepper
 
 			// Check if method has async stepping info
 			var asyncInfo = moduleInfo.SymbolReader.GetAsyncMethodSteppingInfo(methodToken);
-			if (asyncInfo == null)
-				return (false, null);
+			if (asyncInfo == null) return (false, null);
+
+			var ilFrame = frame as CorDebugILFrame;
 
 			// Check if we're at the end of an async method and need step-out behavior
 			if (stepType != StepType.StepOut)
 			{
-				var ilFrame = frame as CorDebugILFrame;
 				if (ilFrame != null)
 				{
 					var ipResult = ilFrame.IP;
@@ -231,7 +231,7 @@ public class AsyncStepper
 				if (stepType == StepType.StepOut)
 				{
 					// For step-out in async method with await, check if we need NotifyDebuggerOfWaitCompletion
-					var builder = GetAsyncBuilder(frame as CorDebugILFrame);
+					var builder = ilFrame is not null ? GetAsyncBuilder(ilFrame) : null;
 					if (builder != null)
 					{
 						// Check if builder is AsyncVoidMethodBuilder
@@ -261,9 +261,7 @@ public class AsyncStepper
 				}
 
 				// Find next await block after current offset
-				var ilFrame = frame as CorDebugILFrame;
-				if (ilFrame == null)
-					return (false, null);
+				if (ilFrame == null) return (false, null);
 
 				var ipResult = ilFrame.IP;
 				var currentOffset = ipResult.pnOffset;
