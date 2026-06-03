@@ -264,7 +264,7 @@ public class PortablePdbWriter2
 		{
 			var methodDef = reader.GetMethodDefinition(method);
 			int localSignatureRowId;
-			MethodBodyBlock methodBody;
+			MethodBodyBlock? methodBody;
 			if (methodDef.RelativeVirtualAddress != 0)
 			{
 				methodBody = file.Reader.GetMethodBody(methodDef.RelativeVirtualAddress);
@@ -296,7 +296,7 @@ public class PortablePdbWriter2
 	static BlobBuilder BuildStateMachineHoistedLocalScopes(ILFunction function)
 	{
 		var builder = new BlobBuilder();
-		foreach (var variable in function.Variables.Where(v => v.StateMachineField != null).OrderBy(v => MetadataTokens.GetRowNumber(v.StateMachineField.MetadataToken)))
+		foreach (var variable in function.Variables.Where(v => v.StateMachineField != null).OrderBy(v => MetadataTokens.GetRowNumber(v.StateMachineField!.MetadataToken)))
 		{
 			builder.WriteUInt32(0);
 			builder.WriteUInt32((uint)function.CodeSize);

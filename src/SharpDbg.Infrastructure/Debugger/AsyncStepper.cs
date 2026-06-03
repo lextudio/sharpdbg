@@ -301,7 +301,7 @@ public class AsyncStepper
 		{
 			// If anything goes wrong, fall back to simple stepper, TODO remove this
 			throw;
-			return (false, null);
+			//return (false, null);
 		}
 	}
 
