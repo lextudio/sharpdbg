@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using ClrDebug;
+using Microsoft.CodeAnalysis.CSharp.Symbols;
 
 namespace SharpDbg.Infrastructure.Debugger;
 
@@ -86,13 +87,36 @@ public partial class ManagedDebugger
 		var metadataImport = module.Module.GetMetaDataInterface().MetaDataImport;
 		var methodProps = metadataImport!.GetMethodProps(corDebugFunction.Token);
 		var isStatic = methodProps.pdwAttr.IsMdStatic();
+		var methodName = methodProps.szMethod;
+		var implicitThisValue = frame.Arguments[0];
+
+		// Async state machines and lambdas: locals are hoisted into fields on the compiler-generated class.
+		// Detect this early so we can search those fields to find the identifier, or if we don't, set instanceMethodImplicitThisValue to the
+		// real user 'this' rather than the raw state-machine object.
+		if (isStatic is false && (methodName is "MoveNext" || methodName.Contains(">b__")))
+		{
+			var containingClassName = metadataImport.GetTypeDefProps(corDebugFunction.Class.Token).szTypeDef;
+			var classGeneratedNameKind = GeneratedNameParser.GetKind(containingClassName);
+			if (classGeneratedNameKind is GeneratedNameKind.StateMachineType or GeneratedNameKind.LambdaDisplayClass)
+			{
+				// Search hoisted fields on the state machine / closure chain for the identifier
+				var hoistedValue = FindHoistedLocalInClosureChain(implicitThisValue, identifier, metadataImport);
+				if (hoistedValue is not null) return hoistedValue;
+
+				// Set instanceMethodImplicitThisValue to the real user 'this' (not the state machine)
+				// so that ResolveIdentifierAsMember can search it for fields/properties.
+				// May be null for static async methods.
+				instanceMethodImplicitThisValue = GetAsyncOrLambdaProxyFieldValue(implicitThisValue, metadataImport);
+				return null;
+			}
+		}
 
 		// Instance methods: Arguments[0] == "this"
 		if (!isStatic)
 		{
 			if (identifier == "this")
 			{
-				return frame.Arguments[0];
+				return implicitThisValue;
 			}
 		}
 
@@ -112,12 +136,41 @@ public partial class ManagedDebugger
 			}
 		}
 
-		// if we're here, we didn't find it, so lets return the 'this' argument if it's a static instance, and we find it
+		// If we're here, we didn't find the identifier as a local, so lets set instanceMethodImplicitThisValue so the call can try to resolve the identifier against it, rather than against the async state machine or lambda DisplayClass
 		if (isStatic is false)
 		{
-			instanceMethodImplicitThisValue = frame.Arguments[0];
+			instanceMethodImplicitThisValue = implicitThisValue;
 		}
 
+		return null;
+	}
+
+	/// Searches the closure chain starting at <paramref name="closureValue"/> for a hoisted local
+	/// whose original name matches <paramref name="identifier"/>. Walks parent closures linked via
+	/// <see cref="GeneratedNameKind.DisplayClassLocalOrField"/> fields.
+	private static CorDebugValue? FindHoistedLocalInClosureChain(CorDebugValue closureValue, string identifier, MetaDataImport metadataImport)
+	{
+		var objectValue = closureValue.UnwrapDebugValueToObject();
+		var fields = metadataImport.EnumFields(objectValue.Class.Token);
+		foreach (var field in fields)
+		{
+			var fieldProps = metadataImport.GetFieldProps(field);
+			var fieldName = fieldProps.szField;
+			GeneratedNameParser.TryParseGeneratedName(fieldName, out var kind, out var openBracketOffset, out var closeBracketOffset);
+			if (kind is GeneratedNameKind.HoistedLocalField)
+			{
+				var originalName = fieldName.AsSpan()[(openBracketOffset + 1)..closeBracketOffset].ToString();
+				if (originalName == identifier) return objectValue.GetFieldValue(objectValue.Class.Raw, field);
+			}
+			else if (kind is GeneratedNameKind.DisplayClassLocalOrField)
+			{
+				var parentClosureValue = objectValue.GetFieldValue(objectValue.Class.Raw, field);
+				var parentObjectValue = parentClosureValue.UnwrapDebugValueToObject();
+				var parentMetadata = parentObjectValue.Class.Module.GetMetaDataInterface().MetaDataImport;
+				var result = FindHoistedLocalInClosureChain(parentClosureValue, identifier, parentMetadata);
+				if (result is not null) return result;
+			}
+		}
 		return null;
 	}
 
