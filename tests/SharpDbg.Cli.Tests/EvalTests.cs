@@ -9,7 +9,7 @@ public class EvalTests(ITestOutputHelper testOutputHelper)
 	[Fact]
 	public async Task SharpDbgCli_EvaluationRequest_Returns()
 	{
-		var startSuspended = false;
+		var startSuspended = true;
 
 		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHostInProc(testOutputHelper, startSuspended);
 		using var _ = adapter;
