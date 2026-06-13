@@ -80,11 +80,21 @@ public class ExpressionSyntaxVisitor(List<CommandBase> commands, bool isDebugger
 				DefaultExpression - should not be in expression AST
 				*/
 
-				case SyntaxKind.IdentifierName:
-				case SyntaxKind.StringLiteralExpression:
-				case SyntaxKind.InterpolatedStringText:
-					_commands.Add(new OneOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), node.GetFirstToken().Value ?? throw new ArgumentNullException()));
-					break;
+			case SyntaxKind.IdentifierName:
+			case SyntaxKind.StringLiteralExpression:
+				_commands.Add(new OneOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), node.GetFirstToken().Value ?? throw new ArgumentNullException()));
+				break;
+
+			case SyntaxKind.InterpolatedStringText:
+			{
+				var rawValue = (string)(node.GetFirstToken().Value ?? throw new ArgumentNullException());
+				var firstParentToken = node.Parent?.ChildTokens().FirstOrDefault();
+				var unescapedValue = firstParentToken?.IsKind(SyntaxKind.InterpolatedStringStartToken) is true // avoids unescaping in a InterpolatedStringExpression with e.g. InterpolatedSingleLineRawStringStartToken as the first child
+					? rawValue.Replace("{{", "{").Replace("}}", "}")
+					: rawValue;
+				_commands.Add(new OneOperandCommand(nodeSyntaxKind, CurrentScopeFlags.Peek(), unescapedValue));
+				break;
+			}
 
 				case SyntaxKind.InterpolatedStringExpression:
 					int? InterpolatedStringContentCount = null;
