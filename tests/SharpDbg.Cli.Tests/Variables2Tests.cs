@@ -73,8 +73,8 @@ public class Variables2Tests(ITestOutputHelper testOutputHelper)
 			new() { VariablesReference = 15, Name = "localGeneric",         	EvaluateName = "localGeneric",         		Value = "{DebuggableConsoleApp.GenericBox<int>}",	Type = "DebuggableConsoleApp.GenericBox<int>" },
 			new() { VariablesReference = 0,  Name = "localDynamic",         	EvaluateName = "localDynamic",         		Value = "241",                                  	Type = "object {int}" },
 			new() { VariablesReference = 16, Name = "localAnonymous",       	EvaluateName = "localAnonymous",       		Value = "{ Id = 1, Name = \"Anonymous\" }",         Type = "<Anonymous Type>" },
-			new() { VariablesReference = 17, Name = "localDateTime",        	EvaluateName = "localDateTime",        		Value = "{13/06/2026 5:42:39 AM}",					Type = "System.DateTime" },
-			new() { VariablesReference = 18, Name = "localGuid",            	EvaluateName = "localGuid",            		Value = "{27de5b68-af24-4e59-a785-dde52e2ea7af}",	Type = "System.Guid" },
+			new() { VariablesReference = 17, Name = "localDateTime",        	EvaluateName = "localDateTime",        		Value = "13/06/2026 5:42:39 AM",					Type = "System.DateTime" },
+			new() { VariablesReference = 18, Name = "localGuid",            	EvaluateName = "localGuid",            		Value = "27de5b68-af24-4e59-a785-dde52e2ea7af",		Type = "System.Guid" },
 		];
 
 		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
