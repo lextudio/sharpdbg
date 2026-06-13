@@ -23,12 +23,12 @@ public class Variables2Tests(ITestOutputHelper testOutputHelper)
 			.WaitForInitializedEvent(initializedEventTcs);
 		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "VariablesClass.cs");
 		debugProtocolHost
-			.WithBreakpointsRequest([137], breakpointedFilePath)
+			.WithBreakpointsRequest([138], breakpointedFilePath)
 			.WithConfigurationDoneRequest()
 			.WithOptionalResumeRuntime(p2.Id, startSuspended);
 
 		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent.ReadStopInfo().Should().Be((breakpointedFilePath, 137, 3));
+		stoppedEvent.ReadStopInfo().Should().Be((breakpointedFilePath, 138, 3));
 		debugProtocolHost
 			.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse)
 			.WithScopesRequest(stackTraceResponse.StackFrames!.First().Id, out var scopesResponse);
@@ -61,6 +61,7 @@ public class Variables2Tests(ITestOutputHelper testOutputHelper)
 			new() { VariablesReference = 0,  Name = "localNullableString",  	EvaluateName = "localNullableString",  		Value = "null",										Type = "string" },
 			new() { VariablesReference = 4,  Name = "localObject",          	EvaluateName = "localObject",          		Value = "{object}",									Type = "object" },
 			new() { VariablesReference = 0,  Name = "localNullableObject",  	EvaluateName = "localNullableObject",  		Value = "null",										Type = "object" },
+			new() { VariablesReference = 0,  Name = "localBoxedInt",  			EvaluateName = "localBoxedInt",  			Value = "42",										Type = "int" },
 			new() { VariablesReference = 5,  Name = "localArray",           	EvaluateName = "localArray",           		Value = "int[3]",									Type = "int[]" },
 			new() { VariablesReference = 6,  Name = "localList",            	EvaluateName = "localList",            		Value = "Count = 2",								Type = "System.Collections.Generic.List<string>" },
 			new() { VariablesReference = 7,  Name = "localDictionary",      	EvaluateName = "localDictionary",      		Value = "Count = 1",								Type = "System.Collections.Generic.Dictionary<int, string>" },
@@ -80,7 +81,7 @@ public class Variables2Tests(ITestOutputHelper testOutputHelper)
 
 		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
 
-		variables.Should().HaveCount(37);
+		variables.Should().HaveCount(38);
 		variables.Should().BeEquivalentTo(expectedVariables, options => options.Excluding(s => s.MemoryReference).Excluding(s => s.PresentationHint));
 	}
 }
