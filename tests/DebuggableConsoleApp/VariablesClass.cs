@@ -100,6 +100,8 @@ public class VariablesClass
 		float localFloat = 1.5f;
 		double localDouble = 2.5;
 		decimal localDecimal = 3.5m;
+		decimal? localNullableDecimal = 2.5m;
+		decimal? localNullableDecimalNull = null;
 
 		int? localNullableInt = 123;
 		int? localNullableIntNull = null;
@@ -124,14 +126,14 @@ public class VariablesClass
 		TestRecord localRecord = new("record", 1);
 		ITestInterface localInterface = new TestClass("interface");
 		Func<int, int> localDelegate = x => x + 1;
-		Tuple<int, string> localTuple = new(1, "tuple");
-		(int A, string B) localValueTuple = (2, "valueTuple");
+		Tuple<int, string> localTuple = new(1, "stringInTuple");
+		(int A, string B) localValueTuple = (2, "stringInValueTuple");
 		GenericBox<int> localGeneric = new(42);
 		dynamic localDynamic = 123;
 		var localAnonymous = new { Id = 1, Name = "Anonymous" };
 
-		DateTime localDateTime = DateTime.UtcNow;
-		Guid localGuid = Guid.NewGuid();
+		DateTime localDateTime = DateTime.Parse("13/06/2026 5:42:39 AM");
+		Guid localGuid = new Guid("27de5b68-af24-4e59-a785-dde52e2ea7af");
 		;
 	}
 }
