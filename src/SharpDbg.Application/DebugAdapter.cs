@@ -209,27 +209,30 @@ public class DebugAdapter : DebugAdapterBase
 
 	protected override LaunchResponse HandleLaunchRequest(LaunchArguments arguments)
 	{
-		var program = GetConfigValue<string>(arguments.ConfigurationProperties, "program");
-		if (string.IsNullOrEmpty(program))
+		return ExecuteWithExceptionHandling(() =>
 		{
-			throw new ProtocolException("Missing program path");
-		}
+			var program = GetConfigValue<string>(arguments.ConfigurationProperties, "program");
+			if (string.IsNullOrEmpty(program))
+			{
+				throw new ProtocolException("Missing program path");
+			}
 
-		var args = GetConfigValue<string[]>(arguments.ConfigurationProperties, "args") ?? [];
-		var cwd = GetConfigValue<string>(arguments.ConfigurationProperties, "cwd");
-		var env = GetConfigValue<Dictionary<string, string>>(arguments.ConfigurationProperties, "env");
-		var stopAtEntry = GetConfigValue<bool?>(arguments.ConfigurationProperties, "stopAtEntry") ?? false;
+			var args = GetConfigValue<string[]>(arguments.ConfigurationProperties, "args") ?? [];
+			var cwd = GetConfigValue<string>(arguments.ConfigurationProperties, "cwd");
+			var env = GetConfigValue<Dictionary<string, string>>(arguments.ConfigurationProperties, "env");
+			var stopAtEntry = GetConfigValue<bool?>(arguments.ConfigurationProperties, "stopAtEntry") ?? false;
 
-		try
-		{
-			_debugger.Launch(program, args, cwd, env, stopAtEntry);
-			return new LaunchResponse();
-		}
-		catch (Exception ex)
-		{
-			_logger?.Invoke($"Launch failed: {ex.Message}");
-			throw new ProtocolException($"Failed to launch: {ex.Message}");
-		}
+			try
+			{
+				_debugger.Launch(program, args, cwd, env, stopAtEntry);
+				return new LaunchResponse();
+			}
+			catch (Exception ex)
+			{
+				_logger?.Invoke($"Launch failed: {ex.Message}");
+				throw new ProtocolException($"Failed to launch: {ex.Message}");
+			}
+		});
 	}
 
 	protected override AttachResponse HandleAttachRequest(AttachArguments arguments)
@@ -314,10 +317,12 @@ public class DebugAdapter : DebugAdapterBase
 
 	protected override SetExceptionBreakpointsResponse HandleSetExceptionBreakpointsRequest(SetExceptionBreakpointsArguments arguments)
 	{
-		// Exception breakpoints configuration
-		_logger?.Invoke($"Exception breakpoints: {string.Join(", ", arguments?.Filters ?? [])}");
+		return ExecuteWithExceptionHandling(() =>
+		{
+			_logger?.Invoke($"Exception breakpoints: {string.Join(", ", arguments?.Filters ?? [])}");
 
-		return new SetExceptionBreakpointsResponse();
+			return new SetExceptionBreakpointsResponse();
+		});
 	}
 
 	protected override ThreadsResponse HandleThreadsRequest(ThreadsArguments arguments)
