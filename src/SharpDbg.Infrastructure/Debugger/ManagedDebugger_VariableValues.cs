@@ -82,7 +82,8 @@ public partial class ManagedDebugger
 	public static CorDebugValueValueResult Get_CorDebugArrayValue_AsString(CorDebugArrayValue corDebugArrayValue)
 	{
 		var typeName = GetCorDebugTypeFriendlyName(corDebugArrayValue.ExactType);
-		var elementTypeName = typeName.AsSpan()[..typeName.IndexOf('[')];
+		var typeNameSpan = typeName.AsSpan();
+		var elementTypeName = typeNameSpan[..typeNameSpan.LastIndexOf('[')];
 		var dimensions = corDebugArrayValue.GetDimensions(corDebugArrayValue.Rank);
 		var value = $"{elementTypeName}[{string.Join(", ", dimensions)}]";
 		return new(typeName, value, false, null);
