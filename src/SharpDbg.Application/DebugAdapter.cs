@@ -221,6 +221,15 @@ public class DebugAdapter : DebugAdapterBase
 			var cwd = GetConfigValue<string>(arguments.ConfigurationProperties, "cwd");
 			var env = GetConfigValue<Dictionary<string, string>>(arguments.ConfigurationProperties, "env");
 			var stopAtEntry = GetConfigValue<bool?>(arguments.ConfigurationProperties, "stopAtEntry") ?? false;
+			var console = GetConfigValue<string>(arguments.ConfigurationProperties, "console");
+			var launchRequestConsoleType = console switch
+			{
+				"integratedTerminal" => LaunchRequestConsoleType.IntegratedTerminal,
+				"externalTerminal" => LaunchRequestConsoleType.ExternalTerminal,
+				"internalConsole" => LaunchRequestConsoleType.InternalConsole,
+				null => LaunchRequestConsoleType.InternalConsole, // Default to internalConsole if not specified
+				_ => throw new ArgumentOutOfRangeException(nameof(console), $"Invalid console type: '{console}'")
+			};
 
 			try
 			{
