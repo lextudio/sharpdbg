@@ -82,7 +82,10 @@ public partial class ManagedDebugger
 	public static CorDebugValueValueResult Get_CorDebugArrayValue_AsString(CorDebugArrayValue corDebugArrayValue)
 	{
 		var typeName = GetCorDebugTypeFriendlyName(corDebugArrayValue.ExactType);
-		return new(typeName, $"{typeName.AsSpan()[..^2]}[{corDebugArrayValue.Count}]", false, null);
+		var elementTypeName = typeName.AsSpan()[..typeName.IndexOf('[')];
+		var dimensions = corDebugArrayValue.GetDimensions(corDebugArrayValue.Rank);
+		var value = $"{elementTypeName}[{string.Join(", ", dimensions)}]";
+		return new(typeName, value, false, null);
 	}
 
 	public static CorDebugValueValueResult GetCorDebugBoxValue_Value_AsString(CorDebugBoxValue corDebugBoxValue)
@@ -207,11 +210,15 @@ public partial class ManagedDebugger
 	{
 		var primitiveName = GetFriendlyTypeName(corDebugType.Type);
 		if (primitiveName is not null) return primitiveName;
-		if (corDebugType.Type is CorElementType.SZArray or CorElementType.Array)
+		if (corDebugType.Type is CorElementType.SZArray)
 		{
-			var arrayElementType = corDebugType.FirstTypeParameter;
-			var elementName = GetCorDebugTypeFriendlyName(arrayElementType);
+			var elementName = GetCorDebugTypeFriendlyName(corDebugType.FirstTypeParameter);
 			return $"{elementName}[]";
+		}
+		if (corDebugType.Type is CorElementType.Array)
+		{
+			var elementName = GetCorDebugTypeFriendlyName(corDebugType.FirstTypeParameter);
+			return $"{elementName}[{new string(',', corDebugType.Rank - 1)}]";
 		}
 		var corDebugClass = corDebugType.Class;
 		// The specific CorDebugType may have type parameters, but they could be for its enclosing type (e.g. a class defined inside a generic class)
