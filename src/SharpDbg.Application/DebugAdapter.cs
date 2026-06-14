@@ -187,7 +187,7 @@ public class DebugAdapter : DebugAdapterBase
 					LaunchRequestConsoleType.ExternalTerminal => RunInTerminalArguments.KindValue.External,
 					_ => throw new ArgumentOutOfRangeException(nameof(launchInfo.LaunchRequestConsoleType), $"Invalid LaunchRequestConsoleType for RunInTerminalRequest: '{launchInfo.LaunchRequestConsoleType}'")
 				},
-				Arguments = [launchInfo.Program, ..launchInfo.Arguments],
+				Arguments = ["dotnet", launchInfo.Program, ..launchInfo.Arguments],
 				Cwd = launchInfo.Cwd,
 				Env = launchInfo.Env.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value),
 				Title = $"{Path.GetFileName(launchInfo.Program)} [DEBUG]"
