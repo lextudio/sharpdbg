@@ -7,16 +7,16 @@ using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
 using NuGet.Versioning;
 
+// https://learn.microsoft.com/en-us/visualstudio/msbuild/find-and-use-msbuild-versions?view=vs-2022#register-instance-before-calling-msbuild
 MSBuildLocator.RegisterDefaults();
-await Run(); // https://learn.microsoft.com/en-us/visualstudio/msbuild/find-and-use-msbuild-versions?view=vs-2022#register-instance-before-calling-msbuild
+await Run("SharpDbg", "SharpDbg.InMemory", "publish-necessary");
 
 return;
 
-async Task Run()
+async Task Run(string nugetPackageId, string projectFileName, string ghActionOutputPublishNecessaryName)
 {
-	const string nugetPackageId = "SharpDbg";
 	var gitRootDirectory = GitRoot.GetGitRootPath();
-	var packageProjectFilePath = Path.Combine(gitRootDirectory, "src", $"{nugetPackageId}.InMemory", $"{nugetPackageId}.InMemory.csproj");
+	var packageProjectFilePath = Path.Combine(gitRootDirectory, "src", projectFileName, $"{projectFileName}.csproj");
 
 	var fileInfo = new FileInfo(packageProjectFilePath);
 	if (fileInfo.Exists is false)
@@ -44,6 +44,6 @@ async Task Run()
 	{
 		Console.WriteLine($"Package {nugetPackageId} with version {packageVersion} does not exist on Nuget");
 		var outputFile = Environment.GetEnvironmentVariable("GITHUB_OUTPUT");
-		await File.AppendAllTextAsync(outputFile!, "publish-necessary=true");
+		await File.AppendAllTextAsync(outputFile!, $"{ghActionOutputPublishNecessaryName}=true");
 	}
 }
