@@ -145,6 +145,7 @@ public class StepTests(ITestOutputHelper testOutputHelper)
 	}
 
 	[Fact]
+	// Testing behaviour that suppresses a breakpoint if a Step lands at the same location
 	public async Task SharpDbgCli_StepOverToBreakpointedLine_StepOver_StopsAtNextLine()
 	{
 		var startSuspended = true;

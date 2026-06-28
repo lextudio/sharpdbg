@@ -111,6 +111,18 @@ public partial class ManagedDebugger
 
 			if (_stepper is not null)
 			{
+				// We have hit a breakpoint. If _stepper is not null, it means we have hit a breakpoint during an in progress step.
+				// _stepper.IsActive tells us if the step is complete or not, IsActive true: incomplete, false: complete
+				// If it is false, ie the step is complete, remembering that we are handling the breakpoint event currently,
+				// it means a StepComplete event is queued, and will be received on the next Continue.
+				// If we have a StepComplete event queued, we want to suppress this breakpoint event and Continue, as this means the breakpoint and the step destination are at the same location.
+				if (_stepper.IsActive is false)
+				{
+					Continue();
+					return;
+				}
+				// Inversely, if the stepper is still Active, ie incomplete, it means the breakpoint occurred before the step destination, and therefore should override/disable/abandon the step, and we should stop at the breakpoint.
+				// Example: stepping over a method, with a breakpoint inside the method.
 				_stepper.Deactivate();
 				_stepper = null;
 			}
