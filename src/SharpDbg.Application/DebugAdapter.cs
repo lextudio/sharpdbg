@@ -406,7 +406,7 @@ public class DebugAdapter : DebugAdapterBase
 				EndLine = ConvertDebuggerLineToClient(f.EndLine),
 				Column = ConvertDebuggerColumnToClient(f.Column),
 				EndColumn = ConvertDebuggerColumnToClient(f.EndColumn),
-				Source = f.Source is not null ? new Source { Path = f.Source } : null
+				Source = f.Source is not null ? new Source { Path = f.Source, Name = Path.GetFileName(f.Source), SourceReference = 0 } : null
 			}).ToList();
 
 			return new StackTraceResponse
