@@ -114,7 +114,7 @@ public partial class ManagedDebugger
 		}
 	}
 
-	private void ContinueProcess()
+	private void Continue()
 	{
 		Guard.Against.Null(_process);
 		_process.Continue(false);

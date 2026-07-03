@@ -10,7 +10,7 @@ public partial class ManagedDebugger
 	private void HandleProcessCreated(object? sender, CreateProcessCorDebugManagedCallbackEventArgs createProcessCorDebugManagedCallbackEventArgs)
 	{
 		_logger?.Invoke("Process created event");
-		ContinueProcess();
+		Continue();
 	}
 
 	private void HandleProcessExited(object? sender, ExitProcessCorDebugManagedCallbackEventArgs exitProcessCorDebugManagedCallbackEventArgs)
@@ -25,7 +25,7 @@ public partial class ManagedDebugger
 		var corThread = createThreadCorDebugManagedCallbackEventArgs.Thread;
 		_threads[corThread.Id] = corThread;
 		OnThreadStarted?.Invoke(corThread.Id, $"Thread {corThread.Id}");
-		ContinueProcess();
+		Continue();
 	}
 
 	private void HandleThreadExited(object? sender, ExitThreadCorDebugManagedCallbackEventArgs exitThreadCorDebugManagedCallbackEventArgs)
@@ -33,7 +33,7 @@ public partial class ManagedDebugger
 		var corThread = exitThreadCorDebugManagedCallbackEventArgs.Thread;
 		_threads.Remove(corThread.Id);
 		OnThreadExited?.Invoke(corThread.Id, $"Thread {corThread.Id}");
-		ContinueProcess();
+		Continue();
 	}
 
 	private void HandleModuleLoaded(object? sender, LoadModuleCorDebugManagedCallbackEventArgs loadModuleCorDebugManagedCallbackEventArgs)
@@ -98,7 +98,7 @@ public partial class ManagedDebugger
 			TryBindPendingBreakpoints();
 		}
 
-		ContinueProcess();
+		Continue();
 	}
 
 	private async void HandleBreakpoint(object? sender, BreakpointCorDebugManagedCallbackEventArgs breakpointCorDebugManagedCallbackEventArgs)
@@ -130,7 +130,7 @@ public partial class ManagedDebugger
 			if (breakpoint is not CorDebugFunctionBreakpoint functionBreakpoint)
 			{
 				_logger?.Invoke("Unknown breakpoint type hit");
-				ContinueProcess(); // may be incorrect
+				Continue(); // may be incorrect
 				return;
 			}
 
@@ -263,7 +263,7 @@ public partial class ManagedDebugger
 	{
 		if (EvalStatus.IsRunning)
 		{
-			ContinueProcess();
+			Continue();
 			return;
 		}
 		var corThread = exceptionEventArgs.Thread;
