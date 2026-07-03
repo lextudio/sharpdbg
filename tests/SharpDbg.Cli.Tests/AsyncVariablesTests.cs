@@ -36,7 +36,7 @@ public class AsyncVariablesTests(ITestOutputHelper testOutputHelper)
 
 		List<Variable> expectedVariables =
 		[
-			new() {Name = "this", Value = "{DebuggableConsoleApp.MyAsyncClass}", Type = "DebuggableConsoleApp.MyAsyncClass", EvaluateName = "this", VariablesReference = 3 },
+			new() {Name = "this", Value = "{DebuggableConsoleApp.MyAsyncClass}", Type = "DebuggableConsoleApp.MyAsyncClass", EvaluateName = "this", VariablesReference = 2 },
 			new() {Name = "myParam", Value = "4", Type = "int", EvaluateName = "myParam" },
 			new() {Name = "intVar", Value = "10", Type = "int", EvaluateName = "intVar" },
 			new() {Name = "result", Value = "0", Type = "int", EvaluateName = "result" },
