@@ -18,6 +18,7 @@ public partial class ManagedDebugger
 	private readonly CorDebugManagedCallback _callbacks;
 	private readonly BreakpointManager _breakpointManager;
 	private readonly VariableManager _variableManager;
+	private readonly FrameReferenceManager _frameReferenceManager;
 	private readonly Action<string>? _logger;
 	private readonly Dictionary<int, CorDebugThread> _threads = new();
 	private readonly Dictionary<CORDB_ADDRESS, ModuleInfo> _modules = new();
@@ -47,6 +48,7 @@ public partial class ManagedDebugger
 		_logger = logger;
 		_breakpointManager = new BreakpointManager();
 		_variableManager = new VariableManager();
+		_frameReferenceManager = new FrameReferenceManager();
 		_callbacks = new CorDebugManagedCallback();
 		EvalStatus = new EvalStatus();
 		_asyncStepper = new AsyncStepper(_modules, _callbacks, this);
@@ -311,6 +313,7 @@ public partial class ManagedDebugger
 		_stepper = null!;
 		_threads.Clear();
 		_variableManager.ClearAndTryDisposeHandleValues();
+		_frameReferenceManager.Clear();
 
 		// Unsubscribe from callbacks to avoid any further event dispatch
 		_callbacks.OnAnyEvent -= OnAnyEvent;

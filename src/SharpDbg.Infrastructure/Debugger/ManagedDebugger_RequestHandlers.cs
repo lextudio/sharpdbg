@@ -154,6 +154,7 @@ public partial class ManagedDebugger
 	{
 		Guard.Against.Null(_process);
 		_variableManager.ClearAndDisposeHandleValues();
+		_frameReferenceManager.Clear();
 		_process.Continue(false);
 	}
 
@@ -366,7 +367,7 @@ public partial class ManagedDebugger
 					{
 						var function = ilFrame.Function;
 
-						var frameId = _variableManager.CreateReference(new VariablesReference(StoredReferenceKind.Scope, null, new ThreadId(threadId), new FrameStackDepth(index), null));
+						var frameId = _frameReferenceManager.GetOrCreateFrameId(new ThreadId(threadId), new FrameStackDepth(startFrame + index));
 						var module = _modules[function.Module.BaseAddress];
 						var line = 0;
 						var column = 0;
@@ -417,19 +418,18 @@ public partial class ManagedDebugger
 	{
 		var result = new List<ScopeInfo>();
 
-		var variablesReference = _variableManager.GetReference(frameId);
-		if (variablesReference is null) return result;
-		var frame = GetFrameForThreadIdAndStackDepth(variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth);
-
+		var frameInfo = _frameReferenceManager.GetFrameInfoById(frameId);
+		if (frameInfo is not var (threadId, frameStackDepth)) return result;
+		var frame = GetFrameForThreadIdAndStackDepth(threadId, frameStackDepth);
 
 		var localVariables = frame.LocalVariables;
 		var arguments = frame.Arguments;
-		var thread = _process!.Threads.Single(s => s.Id == variablesReference.Value.ThreadId.Value);
+		var thread = _process!.Threads.Single(s => s.Id == threadId.Value);
 		var hasCurrentException = thread.TryGetCurrentException(out _) is HRESULT.S_OK;
 		if (localVariables.Length is 0 && arguments.Length is 0 && !hasCurrentException) return result;
 
 		// can this just be the same reference?
-		var localsRef = _variableManager.CreateReference(new VariablesReference(StoredReferenceKind.Scope, null, variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth, null));
+		var localsRef = _variableManager.CreateReference(new VariablesReference(StoredReferenceKind.Scope, null, threadId, frameStackDepth, null));
 		result.Add(new ScopeInfo
 		{
 			Name = "Locals",
@@ -516,13 +516,12 @@ public partial class ManagedDebugger
 		_logger?.Invoke($"Evaluate: {expression}");
 		if (frameId is null or 0) throw new InvalidOperationException("Frame ID is required for evaluation");
 
-		var variablesReference = _variableManager.GetReference(frameId.Value);
-		ArgumentNullException.ThrowIfNull(variablesReference);
-		if (variablesReference.Value.ReferenceKind is not StoredReferenceKind.Scope) throw new InvalidOperationException("Frame ID does not refer to a stack frame scope");
-		var thread = _process!.Threads.Single(s => s.Id == variablesReference.Value.ThreadId.Value);
+		var frameInfo = _frameReferenceManager.GetFrameInfoById(frameId.Value);
+		if (frameInfo is not var (threadId, frameStackDepth)) throw new InvalidOperationException("Frame ID does not exist");
+		var thread = _process!.Threads.Single(s => s.Id == threadId.Value);
 
 		var compiledExpression = ExpressionCompiler.Compile(expression, false);
-		var evalContext = new CompiledExpressionEvaluationContext(thread, variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth);
+		var evalContext = new CompiledExpressionEvaluationContext(thread, threadId, frameStackDepth);
 		ArgumentNullException.ThrowIfNull(_expressionInterpreter);
 		var result = await _expressionInterpreter.Interpret(compiledExpression, evalContext);
 
@@ -531,7 +530,7 @@ public partial class ManagedDebugger
 			_logger?.Invoke($"Evaluation error: {result.Error}");
 			return (result.Error, null, 0);
 		}
-		var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(result.Value!, variablesReference.Value.ThreadId, variablesReference.Value.FrameStackDepth);
+		var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(result.Value!, threadId, frameStackDepth);
 		// TODO: create variables reference. Just return a VariableInfo
 		return (value, friendlyTypeName, 0);
 	}
