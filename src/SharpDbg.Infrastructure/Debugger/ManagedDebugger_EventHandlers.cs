@@ -274,13 +274,17 @@ public partial class ManagedDebugger
 			_stepper = null;
 		}
 
-		if (corThread.ActiveFrame is not CorDebugILFrame ilFrame || GetSourceInfoAtFrame(ilFrame) is not {} sourceInfo)
+		// TODO: Get from BreakpointFilters, determine if user caught the exception, and conditionally continue
+		var breakOnAllExceptions = true; // Does not break if JMC is enabled and the exception is thrown and caught in library code
+		var breakOnUserUnhandledExceptions = true; // configures the debugger to stop when an exception is caught in non-user code after having been thrown in user code or traveled through user code
+		var exceptionIsCaughtByUser = false;
+
+		var shouldContinue = false;
+		if (shouldContinue)
 		{
-			// If we hit a breakpoint and have no source info, just continue
 			ContinueWithVariableClear();
 			return;
 		}
-		var (sourceFilePath, line, column, decompiledSourceInfo) = sourceInfo;
-		OnStopped2?.Invoke(corThread.Id, sourceFilePath, line, column, "exception", decompiledSourceInfo);
+		OnStopped?.Invoke(corThread.Id, "exception");
 	}
 }
