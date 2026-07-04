@@ -594,6 +594,14 @@ public partial class CompiledExpressionInterpreter
 			// Reference type assignment: point LHS reference at the same object as RHS
 			lhsRef.Value = rhsRef.Value;
 		}
+		else if (unwrappedLhs.Raw is ICorDebugGenericValue && unwrappedRhs.Raw is ICorDebugGenericValue)
+		{
+			// CorDebugObjectValue also implements CorDebugGenericValue, cast it
+			var lhsAsGeneric = unwrappedLhs.As<CorDebugGenericValue>();
+			var rhsAsGeneric = unwrappedRhs.As<CorDebugGenericValue>();
+			var data = rhsAsGeneric.GetValueAsBytes();
+			unsafe { fixed (byte* p = data) { lhsAsGeneric.SetValue((IntPtr)p); } }
+		}
 		else
 		{
 			throw new NotImplementedException($"SimpleAssignmentExpression: unsupported combination of LHS type '{unwrappedLhs.GetType().Name}' and RHS type '{unwrappedRhs.GetType().Name}'");

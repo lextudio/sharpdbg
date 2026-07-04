@@ -7,6 +7,13 @@ namespace SharpDbg.Infrastructure.Debugger;
 public static class Extensions
 {
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static bool IsLiteral(this mdFieldDef mdFieldDef, MetaDataImport metadataImport)
+	{
+		var fieldProps = metadataImport.GetFieldProps(mdFieldDef);
+		var isStatic = fieldProps.pdwAttr.IsFdLiteral();
+		return isStatic;
+	}
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static bool IsStatic(this mdFieldDef mdFieldDef, MetaDataImport metadataImport)
 	{
 		var fieldProps = metadataImport.GetFieldProps(mdFieldDef);

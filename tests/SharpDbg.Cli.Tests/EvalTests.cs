@@ -114,5 +114,7 @@ public class EvalTests(ITestOutputHelper testOutputHelper)
 		evaluateResponse29.Result.Should().Be("10");
 		debugProtocolHost.WithEvaluateRequest(stackFrameId, "enumVar", out var evaluateResponse30);
 		evaluateResponse30.Result.Should().Be("SecondValue");
+		debugProtocolHost.WithEvaluateRequest(stackFrameId, "enumVar = MyEnum.ThirdValue", out var evaluateResponse31);
+		evaluateResponse31.Result.Should().Be("ThirdValue");
 	}
 }

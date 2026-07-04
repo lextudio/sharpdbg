@@ -95,8 +95,21 @@ public static class CorDebugValueExtensions
 		if (foundClass is null || foundMetadata is null || foundFieldDef.IsNil) return null;
 
 		var isStatic = foundFieldDef.IsStatic(foundMetadata);
-		var fieldCorDebugValue = isStatic ? foundClass.GetStaticFieldValue(foundFieldDef, ilFrame.Raw) : objectValue.GetFieldValue(foundClass.Raw, foundFieldDef);
+		var isLiteral = foundFieldDef.IsLiteral(foundMetadata);
+		var fieldCorDebugValue = isLiteral ? foundFieldDef.GetLiteralCorDebugValue(foundMetadata, ilFrame) : isStatic ? foundClass.GetStaticFieldValue(foundFieldDef, ilFrame.Raw) : objectValue.GetFieldValue(foundClass.Raw, foundFieldDef);
 		return fieldCorDebugValue;
+	}
+
+	public static CorDebugGenericValue GetLiteralCorDebugValue(this mdFieldDef fieldDef, MetaDataImport metadataImport, CorDebugILFrame ilFrame)
+	{
+		var fieldProps = metadataImport.GetFieldProps(fieldDef);
+		var ppValue = fieldProps.ppValue;
+		var corElementType = fieldProps.pdwCPlusTypeFlag;
+		var eval = ilFrame.Chain.Thread.CreateEval();
+		var createdValue = eval.CreateValue(corElementType, null);
+		if (createdValue is not CorDebugGenericValue corDebugGenericValue) throw new InvalidOperationException("Expected a CorDebugGenericValue for literal value");
+		corDebugGenericValue.SetValue(ppValue);
+		return corDebugGenericValue;
 	}
 
 	public static async Task<CorDebugValue?> GetPropertyValue(this CorDebugValue objectValue, CorDebugManagedCallback callback, EvalStatus evalStatus, CorDebugILFrame ilFrame, string propertyName)
