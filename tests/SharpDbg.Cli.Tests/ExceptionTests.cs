@@ -23,7 +23,6 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
 		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Exceptions.cs");
 		debugProtocolHost
 			.WithBreakpointsRequest([24], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs"))
-			.WithBreakpointsRequest([23], breakpointedFilePath)
 			.WithConfigurationDoneRequest()
 			.WithOptionalResumeRuntime(p2.Id, startSuspended);
 
