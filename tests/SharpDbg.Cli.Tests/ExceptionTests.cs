@@ -172,5 +172,15 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
 
 		var exceptionInfoResponse = debugProtocolHost.SendRequestSync(new ExceptionInfoRequest(stoppedEvent2.ThreadId.Value));
 		exceptionInfoResponse.Should().BeEquivalentTo(expectedExceptionInfoResponse);
+
+		// new Socket() throws once, is caught internally and then rethrown internally. This raises 2 exception 'stopped' events at the same user code location (when JMC is enabled)
+		// Continue from the second exception stop event
+		var stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent2.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
+		stoppedEvent3.AdditionalProperties.Should().BeEmpty();
+
+		// Now we should land on the catch block
+		var stoppedEvent4 = await debugProtocolHost.WithStepOverRequest(stoppedEvent2.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
+		var stopInfo4 = stoppedEvent4.ReadStopInfo();
+		stopInfo4.Should().Be((breakpointedFilePath, 21, 3));
 	}
 }
