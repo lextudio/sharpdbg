@@ -82,6 +82,7 @@ public class VariablesClass
 	public TestClass ClassProperty { get; set; } = new("Property");
 	public TestRecord RecordProperty { get; init; } = new("InitProperty", 5);
 	public int ComputedProperty => IntField * 2;
+	private int ThrowingProperty => throw new InvalidOperationException("ThrowingProperty was accessed");
 
 	public void Test()
 	{
