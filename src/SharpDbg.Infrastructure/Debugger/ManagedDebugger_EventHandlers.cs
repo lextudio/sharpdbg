@@ -101,95 +101,87 @@ public partial class ManagedDebugger
 		Continue();
 	}
 
-	private async void HandleBreakpoint(object? sender, BreakpointCorDebugManagedCallbackEventArgs breakpointCorDebugManagedCallbackEventArgs)
+	private async Task HandleBreakpoint(object? sender, BreakpointCorDebugManagedCallbackEventArgs breakpointCorDebugManagedCallbackEventArgs)
 	{
-		try
-		{
-			//System.Diagnostics.Debugger.Launch();
-			var breakpoint = breakpointCorDebugManagedCallbackEventArgs.Breakpoint;
-			ArgumentNullException.ThrowIfNull(breakpoint);
+		var breakpoint = breakpointCorDebugManagedCallbackEventArgs.Breakpoint;
+		ArgumentNullException.ThrowIfNull(breakpoint);
 
-			if (_stepper is not null)
+		if (_stepper is not null)
+		{
+			// We have hit a breakpoint. If _stepper is not null, it means we have hit a breakpoint during an in progress step.
+			// _stepper.IsActive tells us if the step is complete or not, IsActive true: incomplete, false: complete
+			// If it is false, ie the step is complete, remembering that we are handling the breakpoint event currently,
+			// it means a StepComplete event is queued, and will be received on the next Continue.
+			// If we have a StepComplete event queued, we want to suppress this breakpoint event and Continue, as this means the breakpoint and the step destination are at the same location.
+			if (_stepper.IsActive is false)
 			{
-				// We have hit a breakpoint. If _stepper is not null, it means we have hit a breakpoint during an in progress step.
-				// _stepper.IsActive tells us if the step is complete or not, IsActive true: incomplete, false: complete
-				// If it is false, ie the step is complete, remembering that we are handling the breakpoint event currently,
-				// it means a StepComplete event is queued, and will be received on the next Continue.
-				// If we have a StepComplete event queued, we want to suppress this breakpoint event and Continue, as this means the breakpoint and the step destination are at the same location.
-				if (_stepper.IsActive is false)
+				ContinueWithVariableClear();
+				return;
+			}
+			// Inversely, if the stepper is still Active, ie incomplete, it means the breakpoint occurred before the step destination, and therefore should override/disable/abandon the step, and we should stop at the breakpoint.
+			// Example: stepping over a method, with a breakpoint inside the method.
+			_stepper.Deactivate();
+			_stepper = null;
+		}
+
+		if (breakpoint is not CorDebugFunctionBreakpoint functionBreakpoint)
+		{
+			_logger?.Invoke("Unknown breakpoint type hit");
+			Continue(); // may be incorrect
+			return;
+		}
+
+		var corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
+
+		// Check if async stepper handles this breakpoint
+		if (_asyncStepper is not null)
+		{
+			var (asyncHandled, shouldStop) = await _asyncStepper.TryHandleBreakpoint(corThread, functionBreakpoint);
+			if (asyncHandled)
+			{
+				if (shouldStop is false)
 				{
 					ContinueWithVariableClear();
 					return;
 				}
-				// Inversely, if the stepper is still Active, ie incomplete, it means the breakpoint occurred before the step destination, and therefore should override/disable/abandon the step, and we should stop at the breakpoint.
-				// Example: stepping over a method, with a breakpoint inside the method.
-				_stepper.Deactivate();
-				_stepper = null;
-			}
 
-			if (breakpoint is not CorDebugFunctionBreakpoint functionBreakpoint)
-			{
-				_logger?.Invoke("Unknown breakpoint type hit");
-				Continue(); // may be incorrect
-				return;
-			}
-
-			var corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
-
-			// Check if async stepper handles this breakpoint
-			if (_asyncStepper is not null)
-			{
-				var (asyncHandled, shouldStop) = await _asyncStepper.TryHandleBreakpoint(corThread, functionBreakpoint);
-				if (asyncHandled)
+				if (_stepper is not null)
 				{
-					if (shouldStop is false)
-					{
-						ContinueWithVariableClear();
-						return;
-					}
+					_stepper.Deactivate();
+					_stepper = null;
+				}
 
-					if (_stepper is not null)
-					{
-						_stepper.Deactivate();
-						_stepper = null;
-					}
-
-					var sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame);
-					if (sourceInfo is null)
-					{
-						SetupStepper(corThread, AsyncStepper.StepType.StepOut);
-						ContinueWithVariableClear();
-						return;
-					}
+				var sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame);
+				if (sourceInfo is null)
+				{
+					SetupStepper(corThread, AsyncStepper.StepType.StepOut);
+					ContinueWithVariableClear();
+					return;
 				}
 			}
-
-			var managedBreakpoint = _breakpointManager.FindByCorBreakpoint(functionBreakpoint.Raw);
-			ArgumentNullException.ThrowIfNull(managedBreakpoint);
-
-			managedBreakpoint.HitCount++;
-
-			if (managedBreakpoint.HitCondition is not null && EvaluateHitCondition(managedBreakpoint.HitCount, managedBreakpoint.HitCondition) is false)
-			{
-				_logger?.Invoke($"Hit count condition not met: count={managedBreakpoint.HitCount}, condition={managedBreakpoint.HitCondition}");
-				ContinueWithVariableClear();
-				return;
-			}
-
-			if (managedBreakpoint.Condition is not null && await EvaluateBreakpointCondition(corThread, managedBreakpoint.Condition) is false)
-			{
-				_logger?.Invoke($"Conditional breakpoint condition not met: {managedBreakpoint.Condition}");
-				ContinueWithVariableClear();
-				return;
-			}
-
-			if (managedBreakpoint.ResolvedBreakpointFromPdb is not {} resolvedBreakpoint) throw new UnreachableException("Breakpoint was not resolved from PDB - this should never happen, as breakpoints are only bound to resolved source locations");
-			OnStopped2?.Invoke(corThread.Id, managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, "breakpoint", null);
 		}
-		catch (Exception)
+
+		var managedBreakpoint = _breakpointManager.FindByCorBreakpoint(functionBreakpoint.Raw);
+		ArgumentNullException.ThrowIfNull(managedBreakpoint);
+
+		managedBreakpoint.HitCount++;
+
+		if (managedBreakpoint.HitCondition is not null && EvaluateHitCondition(managedBreakpoint.HitCount, managedBreakpoint.HitCondition) is false)
 		{
-			throw; // TODO handle exception
+			_logger?.Invoke($"Hit count condition not met: count={managedBreakpoint.HitCount}, condition={managedBreakpoint.HitCondition}");
+			ContinueWithVariableClear();
+			return;
 		}
+
+		if (managedBreakpoint.Condition is not null && await EvaluateBreakpointCondition(corThread, managedBreakpoint.Condition) is false)
+		{
+			_logger?.Invoke($"Conditional breakpoint condition not met: {managedBreakpoint.Condition}");
+			ContinueWithVariableClear();
+			return;
+		}
+
+		if (managedBreakpoint.ResolvedBreakpointFromPdb is not {} resolvedBreakpoint) throw new UnreachableException("Breakpoint was not resolved from PDB - this should never happen, as breakpoints are only bound to resolved source locations");
+		OnStopped2?.Invoke(corThread.Id, managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, "breakpoint", null);
 	}
 
 	private void HandleStepComplete(object? sender, StepCompleteCorDebugManagedCallbackEventArgs stepCompleteEventArgs)

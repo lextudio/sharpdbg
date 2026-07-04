@@ -57,11 +57,11 @@ public partial class ManagedDebugger
 		_callbacks.OnAnyEvent += OnAnyEvent;
 	}
 
-	private void OnAnyEvent(object? sender, CorDebugManagedCallbackEventArgs e)
+	private async void OnAnyEvent(object? sender, CorDebugManagedCallbackEventArgs e)
 	{
-		_logger?.Invoke($"Event: {e.GetType().Name}");
 		try
 		{
+			_logger?.Invoke($"Event: {e.GetType().Name}");
 			switch (e)
 			{
 				case CreateProcessCorDebugManagedCallbackEventArgs a: HandleProcessCreated(sender, a); break;
@@ -69,7 +69,7 @@ public partial class ManagedDebugger
 				case CreateThreadCorDebugManagedCallbackEventArgs a: HandleThreadCreated(sender, a); break;
 				case ExitThreadCorDebugManagedCallbackEventArgs a: HandleThreadExited(sender, a); break;
 				case LoadModuleCorDebugManagedCallbackEventArgs a: HandleModuleLoaded(sender, a); break;
-				case BreakpointCorDebugManagedCallbackEventArgs a: HandleBreakpoint(sender, a); break;
+				case BreakpointCorDebugManagedCallbackEventArgs a: await HandleBreakpoint(sender, a).ConfigureAwait(false); break;
 				case StepCompleteCorDebugManagedCallbackEventArgs a: HandleStepComplete(sender, a); break;
 				case BreakCorDebugManagedCallbackEventArgs a: HandleBreak(sender, a); break;
 				case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
