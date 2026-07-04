@@ -1,15 +1,21 @@
+using System.Net.Sockets;
+
 namespace DebuggableConsoleApp;
 
 public static class Exceptions
 {
-	public static void Test(bool shouldThrow)
+	public static void Test(ExceptionToThrow exceptionToThrow)
 	{
-		var test = shouldThrow;
+		if (exceptionToThrow is ExceptionToThrow.None) return;
 		try
 		{
-			if (test)
+			if (exceptionToThrow is ExceptionToThrow.Normal)
 			{
 				throw new InvalidOperationException("Test exception");
+			}
+			else if (exceptionToThrow is ExceptionToThrow.ExternalCode)
+			{
+				using var socket = new Socket(new SafeSocketHandle(IntPtr.Zero, true));
 			}
 		}
 		catch (Exception e)
@@ -17,4 +23,11 @@ public static class Exceptions
 			;
 		}
 	}
+}
+
+public enum ExceptionToThrow
+{
+	None = 0,
+	Normal,
+	ExternalCode,
 }

@@ -23,7 +23,7 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
 		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Exceptions.cs");
 		debugProtocolHost
 			.WithBreakpointsRequest([24], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs"))
-			.WithBreakpointsRequest([17], breakpointedFilePath)
+			.WithBreakpointsRequest([23], breakpointedFilePath)
 			.WithConfigurationDoneRequest()
 			.WithOptionalResumeRuntime(p2.Id, startSuspended);
 
@@ -32,17 +32,17 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
 		stopInfo.filePath.Should().EndWith("Program.cs");
 		stopInfo.line.Should().Be(24);
 
-		// set 'throwException' to true - we do not want other tests to stop at the 'exception' stop event, only this one
+		// set 'ExceptionToThrow' to .Normal - we do not want other tests to stop at the 'exception' stop event, only this one
 		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "throwException = true", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be("true");
+		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "exceptionToThrow = ExceptionToThrow.Normal", out var evaluateResponse);
+		evaluateResponse.Result.Should().Be("Normal");
 
 		debugProtocolHost.WithContinueRequest();
 
 		var stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
 		var stopInfo2 = stoppedEvent2.ReadStopInfo();
 		stopInfo2.filePath.Should().EndWith("Exceptions.cs");
-		stopInfo2.line.Should().Be(12); // Where the exception is thrown
+		stopInfo2.line.Should().Be(14); // Where the exception is thrown
 
 		debugProtocolHost
 			.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2)
@@ -53,13 +53,12 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
 
 		List<Variable> expectedVariables =
 		[
-			new() { Name = "$exception",  EvaluateName = "$exception",  Value = $"System.InvalidOperationException: Test exception{Environment.NewLine}   at DebuggableConsoleApp.Exceptions.Test(Boolean shouldThrow) in {breakpointedFilePath}:line 12", Type = "System.InvalidOperationException", VariablesReference = 2 },
-			new() { Name = "shouldThrow", EvaluateName = "shouldThrow", Value = "true",  Type = "bool" },
-			new() { Name = "test", EvaluateName = "test", Value = "true",  Type = "bool" },
+			new() { Name = "$exception",  EvaluateName = "$exception",  Value = $"System.InvalidOperationException: Test exception{Environment.NewLine}   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 14", Type = "System.InvalidOperationException", VariablesReference = 2 },
+			new() { Name = "exceptionToThrow", EvaluateName = "exceptionToThrow", Value = "Normal",  Type = "DebuggableConsoleApp.ExceptionToThrow", VariablesReference = 3 },
 		];
 		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
 
-		variables.Should().HaveCount(3);
+		variables.Should().HaveCount(expectedVariables.Count);
 		variables.Should().BeEquivalentTo(expectedVariables, options => options.Excluding(s => s.MemoryReference).Excluding(s => s.PresentationHint));
 
 		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out var evaluateResponse2);
@@ -77,7 +76,7 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
 				TypeName = "InvalidOperationException",
 				FullTypeName = "System.InvalidOperationException",
 				EvaluateName = "$exception",
-				StackTrace = $"   at DebuggableConsoleApp.Exceptions.Test(Boolean shouldThrow) in {breakpointedFilePath}:line 12",
+				StackTrace = $"   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 14",
 				InnerException = [],
 				FormattedDescription = "**System.InvalidOperationException:** 'Test exception'",
 				HResult = -2146233079,

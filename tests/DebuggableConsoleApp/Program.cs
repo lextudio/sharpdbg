@@ -17,7 +17,7 @@ public static class Program
 		var hitConditionClass = new HitConditionClass();
 		var variablesClass = new VariablesClass();
 		var columnBreakpointClass = new ColumnBreakpointClass();
-		var throwException = false;
+		var exceptionToThrow = ExceptionToThrow.None;
 		while (true)
 		{
 			// Keep the application running to allow debugging
@@ -31,7 +31,7 @@ public static class Program
 			ClassWithBclCall.Test();
 			var asyncResult = myAsyncClass.MyMethodAsync(4).GetAwaiter().GetResult();
 			myAsyncMethodEvalClass.Test().GetAwaiter().GetResult();
-			Exceptions.Test(throwException);
+			Exceptions.Test(exceptionToThrow);
 			Thread.Sleep(100);
 			//await Task.Delay(500);
 		}
