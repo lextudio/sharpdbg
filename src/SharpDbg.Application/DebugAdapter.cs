@@ -1,3 +1,4 @@
+using Ardalis.GuardClauses;
 using SharpDbg.Infrastructure.Debugger;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
@@ -281,22 +282,25 @@ public class DebugAdapter : DebugAdapterBase
 
 	protected override AttachResponse HandleAttachRequest(AttachArguments arguments)
 	{
-		var processId = GetConfigValue<int?>(arguments.ConfigurationProperties, "processId");
-		if (processId is null)
+		return ExecuteWithExceptionHandling(() =>
 		{
-			throw new ProtocolException("Missing process ID");
-		}
-		var justMyCode = GetConfigValue<bool?>(arguments.ConfigurationProperties, "justMyCode") ?? true;
-		try
-		{
-			_debugger.Attach(processId.Value, justMyCode);
-			return new AttachResponse();
-		}
-		catch (Exception ex)
-		{
-			_logger?.Invoke($"Attach failed: {ex.Message}");
-			throw new ProtocolException($"Failed to attach: {ex.Message}");
-		}
+			var processId = GetConfigValue<int?>(arguments.ConfigurationProperties, "processId");
+			if (processId is null)
+			{
+				throw new ProtocolException("Missing process ID");
+			}
+			var justMyCode = GetConfigValue<bool?>(arguments.ConfigurationProperties, "justMyCode") ?? true;
+			try
+			{
+				_debugger.Attach(processId.Value, justMyCode);
+				return new AttachResponse();
+			}
+			catch (Exception ex)
+			{
+				_logger?.Invoke($"Attach failed: {ex.Message}");
+				throw new ProtocolException($"Failed to attach: {ex.Message}");
+			}
+		});
 	}
 
 	protected override async void HandleConfigurationDoneRequestAsync(IRequestResponder<ConfigurationDoneArguments> responder)
