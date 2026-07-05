@@ -4,6 +4,24 @@ An open source, cross platform .NET debugger implementing the VS Code Debug Adap
 
 SharpDbg uses the [ClrDebug](https://github.com/lordmilko/ClrDebug) managed wrapper around the ICorDebug APIs.
 
+## Usage
+
+SharpDbg is available on NuGet as a .NET Tool: https://www.nuget.org/packages/SharpDbg.Cli
+
+```shell
+dotnet tool install --global SharpDbg.Cli 
+```
+Once installed, run it using:
+
+```shell
+sharpdbg --interpreter=vscode
+```
+
+### 
+
+The in memory library is also published to NuGet: https://www.nuget.org/packages/SharpDbg
+
+
 ## Comparison
 
 |  | SharpDbg | netcoredbg |
@@ -14,12 +32,6 @@ SharpDbg uses the [ClrDebug](https://github.com/lordmilko/ClrDebug) managed wrap
 | **DebuggerBrowsable Support** | ✅ | ✅ |
 | **DebuggerDisplay Support** | ✅ | ❌ |
 | **DebuggerTypeProxy Support** | ✅ | ❌ |
-
-## Current Limitations
-
-SharpDbg is actively developed, and some features are still being worked on:
-
-- Source Link support
 
 ## Architecture
 
