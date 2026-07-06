@@ -138,13 +138,17 @@ public partial class ManagedDebugger
 		stepper.SetUnmappedStopMask(CorDebugUnmappedStop.STOP_NONE);
 		//stepper.SetJMC(true);
 
-		if (stepType == AsyncStepper.StepType.StepOut)
-		{
-			stepper.StepOut();
-		}
-		else // StepIn or StepOver
-		{
-			var symbolReader = _modules[frame.Function.Module.BaseAddress].SymbolReader;
+			if (stepType == AsyncStepper.StepType.StepOut)
+			{
+				stepper.StepOut();
+			}
+			else if (stepType == AsyncStepper.StepType.StepIn)
+			{
+				stepper.Step(true);
+			}
+			else // StepOver
+			{
+				var symbolReader = _modules[frame.Function.Module.BaseAddress].SymbolReader;
 
 			var currentIlOffset = ilFrame.IP.pnOffset;
 			var nullableResult = symbolReader?.GetStartAndEndSequencePointIlOffsetsForIlOffset(frame.Function.Token, currentIlOffset);
@@ -159,8 +163,7 @@ public partial class ManagedDebugger
 					startOffset = startIlOffset,
 					endOffset = endIlOffset
 				};
-				var stepIn = stepType is AsyncStepper.StepType.StepIn;
-				stepper.StepRange(stepIn, [stepRange], 1);
+				stepper.StepRange(false, [stepRange], 1);
 			}
 			else
 			{
