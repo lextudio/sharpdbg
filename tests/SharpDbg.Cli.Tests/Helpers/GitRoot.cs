@@ -8,7 +8,10 @@ public static class GitRoot
 		if (_gitRoot is not null) return _gitRoot;
 		var currentDirectory = Directory.GetCurrentDirectory();
 		var gitRoot = currentDirectory;
-		while (!Directory.Exists(Path.Combine(gitRoot, ".git")))
+		// .git is a directory in a normal clone, but a file holding a gitdir: pointer when this
+		// repo is checked out as a submodule or linked worktree - accept both, otherwise the walk
+		// sails past the real root and resolves fixture paths against an unrelated outer repo.
+		while (!IsGitRoot(gitRoot))
 		{
 			gitRoot = Path.GetDirectoryName(gitRoot); // parent directory
 			if (string.IsNullOrWhiteSpace(gitRoot))
@@ -19,6 +22,12 @@ public static class GitRoot
 
 		_gitRoot = gitRoot;
 		return _gitRoot;
+	}
+
+	private static bool IsGitRoot(string directory)
+	{
+		var dotGit = Path.Combine(directory, ".git");
+		return Directory.Exists(dotGit) || File.Exists(dotGit);
 	}
 }
 
