@@ -297,13 +297,11 @@ public partial class ManagedDebugger
 			_stepper = null;
 		}
 
-		// TODO: Get from BreakpointFilters, determine if user caught the exception, and conditionally continue
-		var breakOnAllExceptions = true; // Does not break if JMC is enabled and the exception is thrown and caught in library code
-		var breakOnUserUnhandledExceptions = true; // configures the debugger to stop when an exception is caught in non-user code after having been thrown in user code or traveled through user code
-		var exceptionIsCaughtByUser = false;
-
-		var shouldContinue = false;
-		if (shouldContinue)
+		// This callback exposes first-chance vs unhandled, but not the full user-code
+		// propagation history. Treat DAP's user-unhandled filter as unhandled for now.
+		var shouldBreak = _breakOnAllExceptions
+			|| (_breakOnUserUnhandledExceptions && exceptionEventArgs.Unhandled);
+		if (!shouldBreak)
 		{
 			ContinueWithVariableClear();
 			return;

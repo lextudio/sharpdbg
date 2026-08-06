@@ -28,6 +28,8 @@ public partial class ManagedDebugger
 	private bool _isRemoteAttach;
 	private int? _pendingAttachProcessId;
 	private bool _justMyCode;
+	private bool _breakOnAllExceptions;
+	private bool _breakOnUserUnhandledExceptions = true;
 	private AsyncStepper? _asyncStepper;
 	private CompiledExpressionInterpreter _expressionInterpreter = null!;
 
@@ -52,6 +54,13 @@ public partial class ManagedDebugger
 	private Task? _runtimeEventCallbackProcessing;
 	private readonly Channel<CorDebugManagedCallbackEventArgs> _runtimeEventChannel;
 	public readonly AsyncLock DapRequestAndRuntimeEventLock = new();
+
+	public void SetExceptionBreakpoints(IEnumerable<string> filters)
+	{
+		var filterSet = filters.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		_breakOnAllExceptions = filterSet.Contains("all");
+		_breakOnUserUnhandledExceptions = filterSet.Contains("user-unhandled");
+	}
 
 	public ManagedDebugger(Action<string>? logger = null)
 	{

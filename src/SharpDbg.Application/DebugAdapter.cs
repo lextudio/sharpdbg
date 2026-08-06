@@ -461,7 +461,9 @@ public class DebugAdapter : DebugAdapterBase
 	{
 		try
 		{
-			_logger?.Invoke($"Exception breakpoints: {string.Join(", ", responder.Arguments?.Filters ?? [])}");
+			var filters = responder.Arguments?.Filters ?? [];
+			_logger?.Invoke($"Exception breakpoints: {string.Join(", ", filters)}");
+			_debugger.SetExceptionBreakpoints(filters);
 
 			responder.SetResponse(new SetExceptionBreakpointsResponse());
 		}
