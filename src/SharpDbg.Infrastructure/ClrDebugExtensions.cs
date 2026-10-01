@@ -14,10 +14,26 @@ public static class ClrDebugExtensions
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	public static unsafe void OnRuntimeStartup(void* pCorDebug, void* parameter, int hr)
 	{
-		var corDebug = ComInterfaceMarshaller<ICorDebug>.ConvertToManaged(pCorDebug);
-		var runtimeStartupTcs = GCHandle.FromIntPtr((IntPtr)parameter).Target as TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>;
-		Guard.Against.Null(runtimeStartupTcs);
-		runtimeStartupTcs.SetResult((corDebug, hr));
+		var state = GCHandle.FromIntPtr((IntPtr)parameter).Target as RuntimeStartupState;
+		Guard.Against.Null(state);
+		try
+		{
+			var corDebug = ComInterfaceMarshaller<ICorDebug>.ConvertToManaged(pCorDebug);
+			// dbgshim lets the runtime continue as soon as this callback returns, so attaching has to happen here -
+			// attaching after an await raced the debuggee, which could load and run user code before any breakpoint was bound
+			if (corDebug is not null && hr >= 0) state.OnStartup?.Invoke(corDebug);
+			state.Tcs.TrySetResult((corDebug, hr));
+		}
+		catch (Exception ex)
+		{
+			state.Tcs.TrySetException(ex);
+		}
+	}
+
+	private sealed class RuntimeStartupState(Action<ICorDebug>? onStartup)
+	{
+		public TaskCompletionSource<(ICorDebug? CorDebug, int Hr)> Tcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public Action<ICorDebug>? OnStartup { get; } = onStartup;
 	}
 
 	public static ICorDebug Mobile(RemoteAttachInfo remoteAttachInfo)
@@ -36,7 +52,8 @@ public static class ClrDebugExtensions
 	}
 
 	/// pass resumeDiagnosticSuspension true if the process was launched with the DOTNET_DefaultDiagnosticPortSuspend environment variable, and you wish for it to be resumed after RegisterForRuntimeStartup
-	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false)
+	/// onStartup runs while the runtime is still blocked at startup - initialize, set the managed handler and DebugActiveProcess there
+	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false, Action<ICorDebug>? onStartup = null)
 	{
 		IntPtr unregisterToken = IntPtr.Zero;
 		GCHandle runtimeStartupTcsHandle = default;
@@ -53,8 +70,9 @@ public static class ClrDebugExtensions
 			 * technically speaking there is the possibility of a race occurring even without us stepping in the debugger, but that's the risk you take when
 			 * you use RegisterForRuntimeStartup */
 
-			var runtimeStartupTcs = new TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>(TaskCreationOptions.RunContinuationsAsynchronously);
-			runtimeStartupTcsHandle = GCHandle.Alloc(runtimeStartupTcs);
+			var state = new RuntimeStartupState(onStartup);
+			var runtimeStartupTcs = state.Tcs;
+			runtimeStartupTcsHandle = GCHandle.Alloc(state);
 			unsafe
 			{
 				var registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
