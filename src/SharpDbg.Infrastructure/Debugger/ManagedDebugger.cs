@@ -189,6 +189,16 @@ public partial class ManagedDebugger
 		Continue();
 	}
 
+	// Runs inside the dbgshim runtime-startup callback, before the runtime is allowed to continue
+	private void AttachAtRuntimeStartup(ICorDebug corDebug, int processId)
+	{
+		corDebug.Initialize();
+		corDebug.SetManagedHandler(_callbacks);
+		_process = corDebug.DebugActiveProcess(processId, false);
+		_isAttached = true;
+		ConfigureExceptionCallbacks();
+	}
+
 	/// <summary>
 	/// Actually attach to an existing process
 	/// </summary>
@@ -199,14 +209,7 @@ public partial class ManagedDebugger
 		// Initialize the debugger
 		_ = Task.Run(async () =>
 		{
-			_corDebug = await ClrDebugExtensions.Automatic(processId);
-			_corDebug.Initialize();
-			_corDebug.SetManagedHandler(_callbacks);
-
-			// Attach to the process
-			_process = _corDebug.DebugActiveProcess(processId, false);
-			_isAttached = true;
-			ConfigureExceptionCallbacks();
+			_corDebug = await ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
 
 			_logger?.Invoke($"Attached to process: {processId}");
 			SendAllBreakpointEvents();
