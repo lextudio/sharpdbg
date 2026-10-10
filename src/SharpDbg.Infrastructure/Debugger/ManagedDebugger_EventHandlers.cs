@@ -99,7 +99,7 @@ public partial class ManagedDebugger
 			corModule.SetJMCStatus(true, 0, []);
 		}
 
-		var moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode);
+		var moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode) { Id = ++_moduleIdCounter };
 		_modules[baseAddress] = moduleInfo;
 		ModuleSet_Version++;
 		TryBindEntryBreakpoint(moduleInfo);
@@ -114,7 +114,12 @@ public partial class ManagedDebugger
 		}
 
 		// Fire the module loaded event
-		OnModuleLoaded?.Invoke(modulePath, Path.GetFileName(modulePath), modulePath);
+		OnModuleLoaded?.Invoke(moduleInfo.Id, moduleInfo.ModuleName, moduleInfo.ModulePath);
+		if (metadataReader.HasSymbols)
+		{
+			foreach (var sourcePath in metadataReader.GetDocumentPaths())
+				OnLoadedSource?.Invoke("new", sourcePath);
+		}
 
 		// Try to bind any pending breakpoints now that we have a new module with symbols
 		if (metadataReader.HasSymbols)
@@ -141,6 +146,11 @@ public partial class ManagedDebugger
 		}
 
 		_logger?.Invoke($"Module unloaded: {moduleInfo.ModulePath} from 0x{(long)baseAddress:X}");
+		if (moduleInfo.MetadataReader.HasSymbols)
+		{
+			foreach (var sourcePath in moduleInfo.MetadataReader.GetDocumentPaths())
+				OnLoadedSource?.Invoke("removed", sourcePath);
+		}
 		moduleInfo.Dispose();
 		ModuleSet_Version++;
 
@@ -167,7 +177,7 @@ public partial class ManagedDebugger
 			OnBreakpointChanged?.Invoke(breakpoint);
 		}
 
-		OnModuleUnloaded?.Invoke(moduleInfo.ModulePath, moduleInfo.ModuleName, moduleInfo.ModulePath);
+		OnModuleUnloaded?.Invoke(moduleInfo.Id, moduleInfo.ModuleName, moduleInfo.ModulePath);
 		Continue();
 	}
 
@@ -270,6 +280,16 @@ public partial class ManagedDebugger
 		if (managedBreakpoint.Condition is not null && await EvaluateBreakpointCondition(corThread, managedBreakpoint.Condition) is false)
 		{
 			_logger?.Invoke($"Conditional breakpoint condition not met: {managedBreakpoint.Condition}");
+			ContinueWithVariableClear();
+			return;
+		}
+
+		// Logpoint: log the message and continue instead of stopping.
+		if (managedBreakpoint.LogMessage is not null)
+		{
+			var message = await FormatLogMessage(corThread, managedBreakpoint.LogMessage);
+			_logger?.Invoke($"Logpoint hit: {message}");
+			OnOutput?.Invoke(message + Environment.NewLine, false);
 			ContinueWithVariableClear();
 			return;
 		}

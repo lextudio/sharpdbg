@@ -34,6 +34,9 @@ public class ModuleInfo : IDisposable
 	public CORDB_ADDRESS BaseAddress { get; }
 	public bool IsUserCode { get; }
 
+	/// <summary>Stable identifier for the DAP modules request and Module events.</summary>
+	public int Id { get; set; }
+
 	public ModuleInfo(ICorDebugModule module, string modulePath, ModuleMetadataReader metadataReader, bool isUserCode)
 	{
 		Module = module;
