@@ -1,5 +1,6 @@
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
+using System.Text;
 
 namespace SharpDbg.Infrastructure.Debugger;
 
@@ -103,6 +104,147 @@ public partial class ModuleMetadataReader
 	}
 	private static ResolvedBreakpoint NewResolvedBreakpoint(int token, SequencePoint sp, string docPath) =>
 		new(token, sp.Offset, sp.StartLine, sp.EndLine, sp.StartColumn, sp.EndColumn, docPath);
+
+	/// <summary>The EmbeddedSource custom debug information kind (ECMA-335 / Roslyn).</summary>
+	static readonly Guid EmbeddedSourceKind = new("0E8A571B-6926-466E-B4AD-8AB04611F5FE");
+
+	/// <summary>The embedded source text for a document, when the PDB carries it (EmbedAllSources).</summary>
+	public bool TryGetEmbeddedSource(string sourceFilePath, out string? sourceText)
+	{
+		sourceText = null;
+		var reader = _pdbMetadataReader;
+		if (reader is null) return false;
+		var normalizedPath = NormalizePath(sourceFilePath);
+		var documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
+		if (documentHandle.IsNil) return false;
+
+		foreach (var handle in reader.GetCustomDebugInformation(documentHandle))
+		{
+			var info = reader.GetCustomDebugInformation(handle);
+			if (reader.GetGuid(info.Kind) != EmbeddedSourceKind) continue;
+			var blob = reader.GetBlobBytes(info.Value);
+			sourceText = DecodeEmbeddedSource(blob);
+			return sourceText is not null;
+		}
+		return false;
+	}
+
+	static string? DecodeEmbeddedSource(byte[] blob)
+	{
+		if (blob.Length < 4) return null;
+		var uncompressedSize = BitConverter.ToInt32(blob, 0);
+		if (uncompressedSize == 0)
+			return Encoding.UTF8.GetString(blob, 4, blob.Length - 4);
+		try
+		{
+			using var input = new MemoryStream(blob, 4, blob.Length - 4);
+			using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
+			using var output = new MemoryStream();
+			deflate.CopyTo(output);
+			return Encoding.UTF8.GetString(output.ToArray());
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	/// <summary>The SourceLink custom debug information kind (on the module definition).</summary>
+	static readonly Guid SourceLinkKind = new("CC110556-A091-4D38-9FEC-25AB9A351A6A");
+
+	/// <summary>The SourceLink JSON document from the PDB, or null.</summary>
+	public string? GetSourceLinkJson()
+	{
+		var reader = _pdbMetadataReader;
+		if (reader is null) return null;
+		foreach (var handle in reader.GetCustomDebugInformation(EntityHandle.ModuleDefinition))
+		{
+			var info = reader.GetCustomDebugInformation(handle);
+			if (reader.GetGuid(info.Kind) != SourceLinkKind) continue;
+			return Encoding.UTF8.GetString(reader.GetBlobBytes(info.Value));
+		}
+		return null;
+	}
+
+	/// <summary>The SourceLink URL for a source file, applying the PDB's SourceLink mapping, or null.</summary>
+	public string? GetSourceLinkUrl(string sourceFilePath)
+	{
+		var json = GetSourceLinkJson();
+		if (json is null) return null;
+		try
+		{
+			using var document = System.Text.Json.JsonDocument.Parse(json);
+			if (!document.RootElement.TryGetProperty("documents", out var documents)) return null;
+			foreach (var property in documents.EnumerateObject())
+			{
+				var pattern = property.Name;
+				var wildcard = pattern.IndexOf('*');
+				if (wildcard < 0)
+				{
+					if (string.Equals(pattern, sourceFilePath, StringComparison.OrdinalIgnoreCase)) return property.Value.GetString();
+					continue;
+				}
+				var prefix = pattern[..wildcard];
+				var suffix = pattern[(wildcard + 1)..];
+				if (sourceFilePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && sourceFilePath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+				{
+					var middle = sourceFilePath.Substring(prefix.Length, sourceFilePath.Length - prefix.Length - suffix.Length);
+					return property.Value.GetString()?.Replace("*", middle);
+				}
+			}
+		}
+		catch
+		{
+			// a malformed SourceLink document simply yields no mapping
+		}
+		return null;
+	}
+
+	/// <summary>Distinct source document paths from the module's PDB, for the loadedSources request.</summary>
+	public IReadOnlyList<string> GetDocumentPaths()
+	{
+		var reader = _pdbMetadataReader;
+		if (reader is null) return [];
+		var paths = new List<string>();
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var handle in reader.Documents)
+		{
+			var name = reader.GetString(reader.GetDocument(handle).Name);
+			if (!string.IsNullOrEmpty(name) && seen.Add(name)) paths.Add(name);
+		}
+		return paths;
+	}
+
+	public IReadOnlyList<(int Line, int Column, int EndLine, int EndColumn)> GetBreakpointLocations(
+		string sourceFilePath, int startLine, int? startColumn, int? endLine, int? endColumn)
+	{
+		var reader = _pdbMetadataReader;
+		if (reader is null) return [];
+		var normalizedPath = NormalizePath(sourceFilePath);
+		var documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
+		if (documentHandle.IsNil) return [];
+
+		var results = new List<(int Line, int Column, int EndLine, int EndColumn)>();
+		var seen = new HashSet<(int, int, int, int)>();
+		foreach (var handle in reader.MethodDebugInformation)
+		{
+			var info = reader.GetMethodDebugInformation(handle);
+			if (info.SequencePointsBlob.IsNil) continue;
+			foreach (var sp in info.GetSequencePoints())
+			{
+				if (sp.IsHidden) continue;
+				var spDoc = sp.Document.IsNil ? info.Document : sp.Document;
+				if (spDoc != documentHandle) continue;
+				if (sp.StartLine < startLine) continue;
+				if (endLine is { } lastLine && sp.StartLine > lastLine) continue;
+				if (startColumn is { } firstColumn && sp.StartLine == startLine && sp.StartColumn < firstColumn) continue;
+				if (endColumn is { } lastColumn && sp.StartLine == (endLine ?? startLine) && sp.EndColumn > lastColumn) continue;
+				if (!seen.Add((sp.StartLine, sp.StartColumn, sp.EndLine, sp.EndColumn))) continue;
+				results.Add((sp.StartLine, sp.StartColumn, sp.EndLine, sp.EndColumn));
+			}
+		}
+		return results.OrderBy(r => r.Line).ThenBy(r => r.Column).ToList();
+	}
 }
 
 internal readonly record struct LineCol(int Line, int Column) : IComparable<LineCol>
