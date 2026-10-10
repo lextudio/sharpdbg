@@ -109,7 +109,7 @@ public partial class ManagedDebugger
 			ICorDebugStringValue stringValue => Get_CorDebugStringValue_AsString(stringValue, escapeStringValue),
 
 			ICorDebugContext corDebugContext => throw new NotImplementedException(),
-			ICorDebugObjectValue corDebugObjectValue => GetCorDebugObjectValue_Value_AsString(corDebugObjectValue, escapeStringValue),
+			ICorDebugObjectValue corDebugObjectValue => GetCorDebugObjectValue_Value_AsString(corDebugObjectValue, escapeStringValue, AllowToString, ShowRawValues),
 			//CorDebugHandleValue corDebugHandleValue => throw new NotImplementedException(), // handled by CorDebugReferenceValue
 			ICorDebugReferenceValue corDebugReferenceValue => GetCorDebugReferenceValue_Value_AsString(corDebugReferenceValue, escapeStringValue),
 
@@ -149,7 +149,7 @@ public partial class ManagedDebugger
 		return value;
 	}
 
-	public static CorDebugValueValueResult GetCorDebugObjectValue_Value_AsString(ICorDebugObjectValue corDebugObjectValue, bool escapeStringValue)
+	public static CorDebugValueValueResult GetCorDebugObjectValue_Value_AsString(ICorDebugObjectValue corDebugObjectValue, bool escapeStringValue, bool allowToString, bool showRawValues)
 	{
 		var module = corDebugObjectValue.Class.Module;
 		var metaDataImport = module.GetMetaDataInterface<IMetaDataImport>();
@@ -176,14 +176,14 @@ public partial class ManagedDebugger
 		{
 			return new(typeName, "", CorDebugValueFormatKind.AnonymousType, debugProxyTypeName);
 		}
-		if (hasDebuggerDisplayAttribute)
+		if (hasDebuggerDisplayAttribute && !showRawValues)
 		{
 			var (debuggerDisplayValue, debuggerDisplayName) = GetCustomAttributeCtorStringArgAndNamedArg(debuggerDisplayAttributePointer, debuggerDisplayAttributeSize, "Name");
 			// I prefer how Rider handles this - instead of overriding the actual name of the variable, just prefix the value with the name
 			if (debuggerDisplayName is not null) debuggerDisplayValue = $"{debuggerDisplayName} = {debuggerDisplayValue}";
 			return new(typeName, debuggerDisplayValue, CorDebugValueFormatKind.DebuggerDisplay, debugProxyTypeName);
 		}
-		if (corDebugObjectValue.ExactType.IsExceptionType())
+		if (corDebugObjectValue.ExactType.IsExceptionType() && allowToString && !showRawValues)
 		{
 			return new(typeName, "", CorDebugValueFormatKind.ToString, debugProxyTypeName);
 		}
@@ -193,7 +193,7 @@ public partial class ManagedDebugger
 			var decimalString = GetDecimalValueString(corDebugObjectValue);
 			return new(typeName, decimalString, CorDebugValueFormatKind.None, null);
 		}
-		if (TypeOverridesToString(corDebugObjectValue.ExactType))
+		if (TypeOverridesToString(corDebugObjectValue.ExactType) && allowToString && !showRawValues)
 		{
 			return new(typeName, "", CorDebugValueFormatKind.ToString, debugProxyTypeName);
 		}

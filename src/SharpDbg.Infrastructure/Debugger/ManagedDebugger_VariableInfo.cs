@@ -49,9 +49,23 @@ public partial class ManagedDebugger
 					Value = value,
 					Type = friendlyTypeName,
 					PresentationHint = variablePresentationHint,
-					VariablesReference = GetVariablesReference(localVariableCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+					VariablesReference = GetVariablesReference(localVariableCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance),
+					MemoryReference = GetMemoryReference(localVariableCorDebugValue)
 				});
 			});
+		}
+	}
+
+	private static string? GetMemoryReference(ICorDebugValue value)
+	{
+		try
+		{
+			var address = (long)value.Address;
+			return address == 0 ? null : "0x" + address.ToString("X");
+		}
+		catch
+		{
+			return null;
 		}
 	}
 
@@ -130,7 +144,8 @@ public partial class ManagedDebugger
 						Value = value,
 						Type = friendlyTypeName,
 						PresentationHint = variablePresentationHint,
-						VariablesReference = GetVariablesReference(implicitThisValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+						VariablesReference = GetVariablesReference(implicitThisValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance),
+						MemoryReference = GetMemoryReference(implicitThisValue)
 					});
 				});
 			}
@@ -154,7 +169,8 @@ public partial class ManagedDebugger
 					Value = value,
 					Type = friendlyTypeName,
 					PresentationHint = variablePresentationHint,
-					VariablesReference = GetVariablesReference(argumentCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+					VariablesReference = GetVariablesReference(argumentCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance),
+					MemoryReference = GetMemoryReference(argumentCorDebugValue)
 				});
 			});
 		}
@@ -178,7 +194,8 @@ public partial class ManagedDebugger
 					Value = value,
 					Type = friendlyTypeName,
 					PresentationHint = presentationHint,
-					VariablesReference = GetVariablesReference(currentException, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+					VariablesReference = GetVariablesReference(currentException, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance),
+					MemoryReference = GetMemoryReference(currentException)
 				});
 			});
 		}
@@ -433,7 +450,8 @@ public partial class ManagedDebugger
 					Value = value,
 					Type = friendlyTypeName,
 					PresentationHint = variablePresentationHint,
-					VariablesReference = GetVariablesReference(fieldCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance)
+					VariablesReference = GetVariablesReference(fieldCorDebugValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance),
+					MemoryReference = GetMemoryReference(fieldCorDebugValue)
 				};
 				result.Add(variableInfo);
 			});
@@ -519,7 +537,8 @@ public partial class ManagedDebugger
 						Value = value,
 						Type = friendlyTypeName,
 						PresentationHint = variablePresentationHint,
-						VariablesReference = variablesReference
+						VariablesReference = variablesReference,
+						MemoryReference = GetMemoryReference(returnValue)
 					};
 					retainReturnValue = variablesReference != 0;
 					result.Add(variableInfo);
@@ -604,7 +623,8 @@ public partial class ManagedDebugger
 					Type = friendlyTypeName,
 					Value = value,
 					PresentationHint = variablePresentationHint,
-					VariablesReference = variableReference
+					VariablesReference = variableReference,
+					MemoryReference = GetMemoryReference(element)
 				};
 				result.Add(variableInfo);
 			});
