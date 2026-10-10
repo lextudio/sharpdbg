@@ -35,6 +35,10 @@ public class BreakpointManager
 		/// <summary>Hit count condition (e.g., ">=10", "==5", "%3")</summary>
 		public string? HitCondition { get; set; }
 
+		/// <summary>Logpoint: when set, the breakpoint logs this message (with {expr} interpolation)
+		/// and continues instead of stopping.</summary>
+		public string? LogMessage { get; set; }
+
 		/// <summary>Current hit count for this breakpoint</summary>
 		public int HitCount { get; set; }
 	}
@@ -48,13 +52,14 @@ public class BreakpointManager
 	/// <summary>
 	/// Create a new breakpoint
 	/// </summary>
-	public BreakpointInfo CreateBreakpoint(string filePath, int line, int? column = null, string? condition = null, string? hitCondition = null)
+	public BreakpointInfo CreateBreakpoint(string filePath, int line, int? column = null, string? condition = null, string? hitCondition = null, string? logMessage = null)
 	{
 		lock (_lock)
 		{
 			var id = _nextBreakpointId++;
 			if (string.IsNullOrWhiteSpace(condition)) condition = null;
 			if (string.IsNullOrWhiteSpace(hitCondition)) hitCondition = null;
+			if (string.IsNullOrWhiteSpace(logMessage)) logMessage = null;
 			var bp = new BreakpointInfo
 			{
 				Id = id,
@@ -64,6 +69,7 @@ public class BreakpointManager
 				Verified = false,
 				Condition = condition,
 				HitCondition = hitCondition,
+				LogMessage = logMessage,
 				HitCount = 0
 			};
 

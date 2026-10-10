@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using ICorDebugSharp;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator;
 using SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Compiler;
@@ -29,6 +30,44 @@ public partial class ManagedDebugger
 		{
 			_logger?.Invoke($"Exception evaluating condition '{condition}': {ex.Message}");
 			return false; // Don't stop on exception - condition couldn't be evaluated, so skip the breakpoint
+		}
+	}
+
+	/// <summary>Interpolates a logpoint message: each <c>{expr}</c> is replaced with the evaluated
+	/// expression's display value.</summary>
+	private async Task<string> FormatLogMessage(ICorDebugThread corThread, string logMessage)
+	{
+		var builder = new StringBuilder();
+		var index = 0;
+		while (index < logMessage.Length)
+		{
+			var open = logMessage.IndexOf('{', index);
+			if (open < 0) { builder.Append(logMessage, index, logMessage.Length - index); break; }
+			var close = logMessage.IndexOf('}', open + 1);
+			if (close < 0) { builder.Append(logMessage, index, logMessage.Length - index); break; }
+			builder.Append(logMessage, index, open - index);
+			var expression = logMessage.Substring(open + 1, close - open - 1);
+			builder.Append(await EvaluateExpressionForDisplay(corThread, expression));
+			index = close + 1;
+		}
+		return builder.ToString();
+	}
+
+	private async Task<string> EvaluateExpressionForDisplay(ICorDebugThread corThread, string expression)
+	{
+		try
+		{
+			var threadId = new ThreadId(corThread.Id);
+			var frameStackDepth = new FrameStackDepth(0);
+			var evalContext = new CompiledExpressionEvaluationContext(corThread, threadId, frameStackDepth);
+			using var result = await _expressionEvaluator.Evaluate(expression, evalContext);
+			if (result.Error is not null) return result.Error;
+			var (_, value, _, _) = await GetValueForCorDebugValueAsync(result.Value!, threadId, frameStackDepth, true);
+			return value;
+		}
+		catch (Exception ex)
+		{
+			return "<error: " + ex.Message + ">";
 		}
 	}
 
