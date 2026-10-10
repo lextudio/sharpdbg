@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Threading.Channels;
+using System.Runtime.InteropServices;
 using Ardalis.GuardClauses;
 using ICorDebugSharp;
 using NeoSmart.AsyncLock;
@@ -19,6 +20,7 @@ public partial class ManagedDebugger
 	private readonly VariableManager _variableManager;
 	private readonly FrameReferenceManager _frameReferenceManager;
 	private readonly Action<string>? _logger;
+	private readonly string? _moduleDirectory;
 	private sealed class ThreadInfo(ICorDebugThread thread)
 	{
 		public ICorDebugThread Thread { get; } = thread;
@@ -40,8 +42,18 @@ public partial class ManagedDebugger
 	private bool _isAttached;
 	private bool _isRemoteAttach;
 	private int? _pendingAttachProcessId;
+	private string? _debuggerLibraryDirectory;
+	private bool _continueStoppedProcess;
+	private int? _attachedProcessId;
 	private bool _justMyCode;
 	private bool _stopAtEntry;
+	private bool _noDebug;
+	private int _moduleIdCounter;
+
+	/// <summary>Whether an object's overridden ToString() may be called for display (ExpressionEvaluationOptions.allowToString).</summary>
+	public static bool AllowToString { get; set; } = true;
+	/// <summary>Whether DebuggerDisplay/ToString are suppressed and the raw value is shown (ExpressionEvaluationOptions.showRawValues).</summary>
+	public static bool ShowRawValues { get; set; }
 	private EntryBreakpoint? _entryBreakpoint;
 	private sealed record EntryBreakpoint(ICorDebugFunctionBreakpoint CorBreakpoint, CORDB_ADDRESS ModuleBaseAddress, int MethodToken, int IlOffset);
 
@@ -56,6 +68,9 @@ public partial class ManagedDebugger
 
 	private Process? _debuggeeProcess;
 
+	/// <summary>The debuggee process id, for the <c>$pid</c> pseudo-variable.</summary>
+	public int? ProcessId => _debuggeeProcess?.Id ?? _attachedProcessId;
+
 	public event Action<int, string>? OnStopped;
 	// ThreadId, FilePath, Line, Column, Reason, HitBreakpointIds, DecompiledSourceInfo
 	public event Action<int, string, int, int, string, List<int>?>? OnStopped2;
@@ -64,13 +79,17 @@ public partial class ManagedDebugger
 	public event Action? OnTerminated;
 	public event Action<int>? OnThreadStarted;
 	public event Action<int>? OnThreadExited;
-	public event Action<string, string, string>? OnModuleLoaded;
-	public event Action<string, string, string>? OnModuleUnloaded;
+	// ModuleId, Name, Path
+	public event Action<int, string, string>? OnModuleLoaded;
+	public event Action<int, string, string>? OnModuleUnloaded;
+	// Reason ("new"/"removed"), SourcePath
+	public event Action<string, string>? OnLoadedSource;
 	// Output text, isError (true for stderr, false for stdout)
 	public event Action<string, bool>? OnOutput;
 	// Debugger messages the user should see, e.g. a breakpoint condition that failed to evaluate
 	public event Action<string>? OnImportantOutput;
-	public event Action<int, string>? OnProcessStarted;
+	// ProcessId, Name, IsAttach
+	public event Action<int, string, bool>? OnProcessStarted;
 	public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
 	public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
 
@@ -80,9 +99,10 @@ public partial class ManagedDebugger
 	private readonly Channel<CorDebugManagedCallbackEventArgs> _runtimeEventChannel;
 	public readonly AsyncLock DapRequestAndRuntimeEventLock = new();
 
-	public ManagedDebugger(Action<string>? logger = null)
+	public ManagedDebugger(Action<string>? logger = null, string? moduleDirectory = null)
 	{
 		_logger = logger;
+		_moduleDirectory = moduleDirectory;
 		_breakpointManager = new BreakpointManager();
 		_variableManager = new VariableManager();
 		_frameReferenceManager = new FrameReferenceManager();
@@ -197,11 +217,28 @@ public partial class ManagedDebugger
 	// Runs inside the dbgshim runtime-startup callback, before the runtime is allowed to continue
 	private void AttachAtRuntimeStartup(ICorDebug corDebug, int processId)
 	{
+		// Each step is logged: a session that never reports "Attached" must show whether dbgshim called back at all
+		_logger?.Invoke($"Runtime startup callback for process {processId}");
 		corDebug.Initialize();
+		_logger?.Invoke($"ICorDebug initialized for process {processId}");
 		corDebug.SetManagedHandler(_callbacks);
+		_logger?.Invoke($"Managed handler set for process {processId}");
 		_process = corDebug.DebugActiveProcess(processId, false);
+		_logger?.Invoke($"DebugActiveProcess returned for process {processId}");
 		_isAttached = true;
 		ConfigureExceptionCallbacks();
+	}
+
+	private const int SIGCONT = 19; // macOS only; the attach request rejects continueStoppedProcess elsewhere
+
+	[DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+	private static extern int SendSignal(int pid, int signal);
+
+	private void ContinueStoppedProcess(int processId)
+	{
+		if (SendSignal(processId, SIGCONT) != 0)
+			throw new InvalidOperationException($"Could not continue stopped process {processId} (errno {Marshal.GetLastPInvokeError()})");
+		_logger?.Invoke($"Sent SIGCONT to process {processId}");
 	}
 
 	/// <summary>
@@ -211,12 +248,34 @@ public partial class ManagedDebugger
 	{
 		_logger?.Invoke($"Attaching to process: {processId}");
 
-		// Initialize the debugger
+		// Register for runtime startup here, before configurationDone is answered: a client that started the process
+		// suspended resumes it on that answer, and a registration that came later missed the startup notification,
+		// so the debuggee ran unattached. Automatic registers synchronously before its first await.
+		// A process started stopped (simctl launch --wait-for-debugger) is let go only once the registration is in
+		// place; a failure there ends the registration through Automatic's own cleanup
+		Action? afterRegistration = _continueStoppedProcess ? () => ContinueStoppedProcess(processId) : null;
+		var attach = ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId),
+			debuggerLibraryDirectory: _debuggerLibraryDirectory, afterRegistration: afterRegistration);
+		_logger?.Invoke($"Runtime startup registration done for process {processId} (status: {attach.Status})");
 		_ = Task.Run(async () =>
 		{
-			_corDebug = await ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
+			try
+			{
+				_corDebug = await attach;
+			}
+			catch (Exception ex)
+			{
+				// Nothing awaits this task: tell the client, or it shows a session that never attached as running
+				_logger?.Invoke($"Attach to process {processId} failed: {ex}");
+				OnOutput?.Invoke($"Attach to process {processId} failed: {ex.Message}\n", true);
+				OnTerminated?.Invoke();
+				return;
+			}
 
 			_logger?.Invoke($"Attached to process: {processId}");
+			var name = "";
+			try { name = Process.GetProcessById(processId).ProcessName; } catch { /* the process may have exited */ }
+			OnProcessStarted?.Invoke(processId, name, true);
 			SendAllBreakpointEvents();
 		});
 	}
@@ -633,6 +692,21 @@ public partial class ManagedDebugger
 	}
 
 	internal IReadOnlyCollection<ModuleInfo> AllModules => _modules.Values;
+
+	internal string GetIntrinsicReferenceAssemblyPath()
+	{
+		var hostCoreLibrary = typeof(object).Assembly.Location;
+		if (!string.IsNullOrEmpty(hostCoreLibrary)) return hostCoreLibrary;
+		if (_moduleDirectory is not null)
+		{
+			var candidate = Path.Combine(_moduleDirectory, "System.Private.CoreLib.dll");
+			var loadedCoreLibrary = AllModules.FirstOrDefault(module => Path.GetFileName(module.ModulePath) is "System.Private.CoreLib" or "System.Private.CoreLib.dll");
+			using var reader = ModuleMetadataReader.TryLoad(candidate);
+			if (reader is not null && loadedCoreLibrary is not null && reader.Mvid == loadedCoreLibrary.MetadataReader.Mvid)
+				return candidate;
+		}
+		throw new InvalidOperationException("A matching System.Private.CoreLib.dll is required for expression evaluation.");
+	}
 	internal ModuleInfo GetModuleInfoForModule(ICorDebugModule module) => _modules[module.BaseAddress];
 
 	internal ICorDebugValue? GetCurrentException(ThreadId threadId)
