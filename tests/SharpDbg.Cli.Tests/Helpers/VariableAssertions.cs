@@ -18,8 +18,10 @@ public static class VariableAssertions
 
 		variables.Should().BeEquivalentTo(expectedVariables, options =>
 		{
+			// MemoryReference is a non-deterministic address; never compare it.
+			options = options.Excluding(v => v.MemoryReference);
 			if (referenceComparison is VariableReferenceComparison.Permissive)
-				options = options.Excluding(v => v.MemoryReference).Excluding(v => v.PresentationHint);
+				options = options.Excluding(v => v.PresentationHint);
 
 			options.Using<string>(context =>
 			{
