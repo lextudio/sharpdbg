@@ -42,10 +42,10 @@ public static partial class TestHelper
 		return GetRunningDebugProtocolHostCore(testOutputHelper, startSuspended, process.StandardInput.BaseStream, process.StandardOutput.BaseStream, new ProcessKiller(process));
 	}
 
-	public static (DisposableDebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer debugEventTcs, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostInProc(ITestOutputHelper testOutputHelper, bool startSuspended)
+	public static (DisposableDebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer debugEventTcs, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostInProc(ITestOutputHelper testOutputHelper, bool startSuspended, string appName = "DebuggableConsoleApp")
 	{
 		var (input, output, debugAdapterDisposable) = SharpDbgInMemory.NewDebugAdapterStreams(Log);
-		return GetRunningDebugProtocolHostCore(testOutputHelper, startSuspended, input, output, debugAdapterDisposable);
+		return GetRunningDebugProtocolHostCore(testOutputHelper, startSuspended, input, output, debugAdapterDisposable, appName);
 		void Log(string message)
 		{
 			testOutputHelper.WriteLine($"Log [SharpDbg]: {message}");
@@ -63,9 +63,9 @@ public static partial class TestHelper
 		return (host, initializedEventTcs, debugEventTcs, adapter);
 	}
 
-	private static (DisposableDebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer debugEventTcs, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostCore(ITestOutputHelper testOutputHelper, bool startSuspended, Stream input, Stream output, IDisposable debugAdapterDisposable)
+	private static (DisposableDebugProtocolHost, TaskCompletionSource InitializedEventTcs, TcsContainer debugEventTcs, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostCore(ITestOutputHelper testOutputHelper, bool startSuspended, Stream input, Stream output, IDisposable debugAdapterDisposable, string appName = "DebuggableConsoleApp")
 	{
-		var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
+		var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended, appName);
 		var initializedEventTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper, initializedEventTcs);
 		var debugEventTcs = new TcsContainer { Tcs = new TaskCompletionSource<DebugEvent>(TaskCreationOptions.RunContinuationsAsynchronously) };
@@ -92,6 +92,12 @@ public static partial class TestHelper
 	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, bool stopAtEntry, bool justMyCode)
 	{
 		debugProtocolHost.SendRequestSync(DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry, justMyCode));
+		return debugProtocolHost;
+	}
+
+	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, bool stopAtEntry, bool justMyCode, bool noDebug)
+	{
+		debugProtocolHost.SendRequestSync(DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry, justMyCode, noDebug));
 		return debugProtocolHost;
 	}
 	public static async Task<DebugProtocolHost> WaitForInitializedEvent(this DebugProtocolHost debugProtocolHost, TaskCompletionSource initializedEventTcs)

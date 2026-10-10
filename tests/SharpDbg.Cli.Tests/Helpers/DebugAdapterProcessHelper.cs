@@ -86,10 +86,11 @@ public static class DebugAdapterProcessHelper
 		};
 	}
 
-	public static LaunchRequest GetLaunchRequest(string program, bool stopAtEntry, bool justMyCode = true)
+	public static LaunchRequest GetLaunchRequest(string program, bool stopAtEntry, bool justMyCode = true, bool noDebug = false)
 	{
 		return new LaunchRequest
 		{
+			NoDebug = noDebug,
 			ConfigurationProperties = new Dictionary<string, JToken>
 			{
 				["name"] = "LaunchRequestName",
@@ -138,7 +139,8 @@ public static class DebugAdapterProcessHelper
 				Line = s.Line,
 				Column = s.Column,
 				Condition = s.Condition,
-				HitCondition = s.HitCondition
+				HitCondition = s.HitCondition,
+				LogMessage = s.LogMessage
 			}).ToList()
 		};
 		return setBreakpointsRequest;

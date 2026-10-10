@@ -4,9 +4,9 @@ namespace SharpDbg.Cli.Tests.Helpers;
 
 public static class DebuggableProcessHelper
 {
-	public static Process StartDebuggableProcess(bool startSuspended = false)
+	public static Process StartDebuggableProcess(bool startSuspended = false, string appName = "DebuggableConsoleApp")
 	{
-		var filePath = Path.JoinFromGitRoot("artifacts", "bin", "DebuggableConsoleApp", "debug", OperatingSystem.IsWindows() ? "DebuggableConsoleApp.exe" : "DebuggableConsoleApp");
+		var filePath = Path.JoinFromGitRoot("artifacts", "bin", appName, "debug", OperatingSystem.IsWindows() ? appName + ".exe" : appName);
 		if (File.Exists(filePath) is false) throw new FileNotFoundException("DebuggableConsoleApp executable not found", filePath);
 		var process = new Process
 		{
