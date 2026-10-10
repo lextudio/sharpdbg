@@ -11,6 +11,7 @@ using SharpDbg.Application.Protocol;
 using MSBreakpoint = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages.Breakpoint;
 using MSThread = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages.Thread;
 using MSStackFrame = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages.StackFrame;
+using MSModule = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages.Module;
 
 namespace SharpDbg.Application;
 
@@ -19,11 +20,19 @@ namespace SharpDbg.Application;
 /// </summary>
 public class DebugAdapter : DebugAdapterBase
 {
-	private readonly ManagedDebugger _debugger;
+	private ManagedDebugger _debugger;
 	private readonly Action<string>? _logger;
 	private bool _clientLinesStartAt1 = true;
 	private bool _clientColumnsStartAt1 = true;
 	private int _shutdownRequested;
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<int, (string File, int Line, int? Column)> _gotoTargets = new();
+	private int _nextGotoTargetId;
+
+	// The last launch/attach, replayed by a restart request.
+	private LaunchInfo? _lastLaunchInfo;
+	private bool _lastJustMyCode = true;
+	private int? _lastAttachProcessId;
+	private RemoteAttachInfo? _lastRemoteAttachInfo;
 
 	/// <summary>
 	/// Raised once the debug session has ended (a disconnect request has been fully handled).
@@ -76,6 +85,7 @@ public class DebugAdapter : DebugAdapterBase
 			responder.SetResponse(new VsCustomMessageResponse());
 		});
 		Protocol.RegisterRequestType<ResolveStackFrameRequest, ResolveStackFrameArguments, ResolveStackFrameResponse>(HandleResolveStackFrameRequestAsync);
+		Protocol.RegisterRequestType<SourceLinkRequest, SourceLinkArguments, SourceLinkResponse>(HandleSourceLinkRequest);
 		Protocol.RegisterRequestType<UnsupportedRequest, JObject, UnsupportedResponse>(responder =>
 		{
 			responder.SetError(new ProtocolException($"Request '{responder.Command}' is not supported."));
@@ -163,6 +173,17 @@ public class DebugAdapter : DebugAdapterBase
 		return default;
 	}
 
+	/// <summary>Applies ExpressionEvaluationOptions (allowToString / showRawValues) to the debugger.</summary>
+	private void ApplyExpressionEvaluationOptions(Dictionary<string, JToken>? config)
+	{
+		ManagedDebugger.AllowToString = true;
+		ManagedDebugger.ShowRawValues = false;
+		if (config?.TryGetValue("expressionEvaluationOptions", out var token) != true || token is not JObject options)
+			return;
+		if (options["allowToString"]?.Type == JTokenType.Boolean) ManagedDebugger.AllowToString = options["allowToString"]!.Value<bool>();
+		if (options["showRawValues"]?.Type == JTokenType.Boolean) ManagedDebugger.ShowRawValues = options["showRawValues"]!.Value<bool>();
+	}
+
 	private void SubscribeToDebuggerEvents()
 	{
 		_debugger.OnStopped += (threadId, reason) =>
@@ -177,7 +198,7 @@ public class DebugAdapter : DebugAdapterBase
 
 		_debugger.OnStopped2 += (threadId, filePath, line, column, reason, hitBreakpointIds) =>
 		{
-			var source = new Source { Path = filePath };
+			var source = CreateSource(filePath);
 			var stoppedEvent = new StoppedEvent
 			{
 				Reason = ConvertStopReason(reason),
@@ -206,12 +227,7 @@ public class DebugAdapter : DebugAdapterBase
 					EndColumn = breakpoint is { IsFunctionBreakpoint: false, Verified: true, EndColumn: not null } ? ConvertDebuggerColumnToClient(breakpoint.EndColumn.Value) : null,
 					Offset = breakpoint is { IsFunctionBreakpoint: false, Verified: true } ? 0 : null,
 					Message = breakpoint.Message,
-					Source = breakpoint is not { IsFunctionBreakpoint: false, Verified: true } ? null : new Source
-					{
-						Path = breakpoint.FilePath,
-						Name = Path.GetFileName(breakpoint.FilePath),
-						SourceReference = 0
-					}
+					Source = breakpoint is not { IsFunctionBreakpoint: false, Verified: true } ? null : CreateSource(breakpoint.FilePath)
 				}
 			});
 		};
@@ -284,13 +300,22 @@ public class DebugAdapter : DebugAdapterBase
 			});
 		};
 
-		_debugger.OnProcessStarted += (processId, name) =>
+		_debugger.OnLoadedSource += (reason, path) =>
+		{
+			Protocol.SendEvent(new LoadedSourceEvent
+			{
+				Reason = reason == "removed" ? LoadedSourceEvent.ReasonValue.Removed : LoadedSourceEvent.ReasonValue.New,
+				Source = CreateSource(path)
+			});
+		};
+
+		_debugger.OnProcessStarted += (processId, name, isAttach) =>
 		{
 			Protocol.SendEvent(new ProcessEvent
 			{
 				Name = name,
 				SystemProcessId = processId,
-				StartMethod = ProcessEvent.StartMethodValue.Launch,
+				StartMethod = isAttach ? ProcessEvent.StartMethodValue.Attach : ProcessEvent.StartMethodValue.Launch,
 				IsLocalProcess = true
 			});
 		};
@@ -351,8 +376,12 @@ public class DebugAdapter : DebugAdapterBase
 			SupportsTerminateRequest = true,
 			SupportsExceptionInfoRequest = true,
 			SupportsExceptionFilterOptions = true,
+			SupportsSingleThreadExecutionRequests = true,
+			SupportsBreakpointLocationsRequest = true,
+			SupportsLoadedSourcesRequest = true,
+			SupportsGotoTargetsRequest = true,
+			SupportsRestartRequest = true,
 			SupportsStepInTargetsRequest = false,
-			SupportsGotoTargetsRequest = false,
 			ExceptionBreakpointFilters =
 			[
 				new ExceptionBreakpointsFilter { Filter = "all", Label = "All Exceptions", Default = false },
@@ -366,8 +395,7 @@ public class DebugAdapter : DebugAdapterBase
 		try
 		{
 			var arguments = responder.Arguments;
-			var program = GetConfigValue<string>(arguments.ConfigurationProperties, "program");
-			if (string.IsNullOrEmpty(program))
+			var program = GetConfigValue<string>(arguments.ConfigurationProperties, "program");			if (string.IsNullOrEmpty(program))
 			{
 				throw new ProtocolException("Missing program path");
 			}
@@ -378,6 +406,7 @@ public class DebugAdapter : DebugAdapterBase
 			var stopAtEntry = GetConfigValue<bool?>(arguments.ConfigurationProperties, "stopAtEntry") ?? false;
 			var justMyCode = GetConfigValue<bool?>(arguments.ConfigurationProperties, "justMyCode") ?? true;
 			var console = GetConfigValue<string>(arguments.ConfigurationProperties, "console");
+			ApplyExpressionEvaluationOptions(arguments.ConfigurationProperties);
 			var launchRequestConsoleType = console switch
 			{
 				"integratedTerminal" => LaunchRequestConsoleType.IntegratedTerminal,
@@ -398,9 +427,14 @@ public class DebugAdapter : DebugAdapterBase
 				Cwd = cwd,
 				Env = env,
 				StopAtEntry = stopAtEntry,
-				LaunchRequestConsoleType = launchRequestConsoleType
+				LaunchRequestConsoleType = launchRequestConsoleType,
+				NoDebug = arguments.NoDebug ?? false
 			};
 
+			_lastLaunchInfo = launchInfo;
+			_lastJustMyCode = justMyCode;
+			_lastAttachProcessId = null;
+			_lastRemoteAttachInfo = null;
 			await ExecuteWithDebuggerProcessingLockAsync(async () => _debugger.Launch(launchInfo, justMyCode));
 			responder.SetResponse(new LaunchResponse());
 		}
@@ -444,6 +478,18 @@ public class DebugAdapter : DebugAdapterBase
 				};
 			}
 			var justMyCode = GetConfigValue<bool?>(arguments.ConfigurationProperties, "justMyCode") ?? true;
+			// enableStepFiltering is the Just My Code step filter under another name.
+			var enableStepFiltering = GetConfigValue<bool?>(arguments.ConfigurationProperties, "enableStepFiltering");
+			if (enableStepFiltering is not null) justMyCode = enableStepFiltering.Value;
+			_logger?.Invoke($"Attach options: stopAtEntry={GetConfigValue<bool?>(arguments.ConfigurationProperties, "stopAtEntry")}, "
+				+ $"suppressJITOptimizations={GetConfigValue<bool?>(arguments.ConfigurationProperties, "suppressJITOptimizations")}, "
+				+ $"sourceFileMap={(arguments.ConfigurationProperties?.ContainsKey("sourceFileMap") == true)}, "
+				+ $"expressionEvaluationOptions={(arguments.ConfigurationProperties?.ContainsKey("expressionEvaluationOptions") == true)}");
+			ApplyExpressionEvaluationOptions(arguments.ConfigurationProperties);
+			_lastLaunchInfo = null;
+			_lastJustMyCode = justMyCode;
+			_lastAttachProcessId = remoteAttachInfo is null ? processId.Value : null;
+			_lastRemoteAttachInfo = remoteAttachInfo;
 			await ExecuteWithDebuggerProcessingLockAsync(async () =>
 			{
 				if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode);
@@ -488,7 +534,8 @@ public class DebugAdapter : DebugAdapterBase
 					ConvertClientLineToDebugger(bp.Line),
 					bp.Condition,
 					bp.HitCondition,
-					bp.Column is null ? null : ConvertClientColumnToDebugger(bp.Column.Value)))
+					bp.Column is null ? null : ConvertClientColumnToDebugger(bp.Column.Value),
+					bp.LogMessage))
 				.ToArray() ?? [];
 
 			var breakpoints = await ExecuteWithDebuggerProcessingLockAsync(async () => _debugger.SetBreakpoints(arguments.Source.Path, breakpointRequests));
@@ -502,10 +549,7 @@ public class DebugAdapter : DebugAdapterBase
 				EndLine = bp.Verified ? ConvertDebuggerLineToClient(bp.EndLine) : null,
 				EndColumn = bp is { Verified: true, EndColumn: not null } ? ConvertDebuggerColumnToClient(bp.EndColumn.Value) : null,
 				Message = bp.Message,
-				Source = new Source
-				{
-					Path = bp.FilePath
-				}
+				Source = CreateSource(bp.FilePath)
 			}).ToList();
 
 			responder.SetResponse(new SetBreakpointsResponse
@@ -517,6 +561,165 @@ public class DebugAdapter : DebugAdapterBase
 		{
 			_logger?.Invoke($"HandleSetBreakpointsRequestAsync failed: {ex.Message} , {ex}");
 			responder.SetError(new ProtocolException($"Failed to set breakpoints: {ex.Message}", ex));
+		}
+	}
+
+	protected override async void HandleBreakpointLocationsRequestAsync(IRequestResponder<BreakpointLocationsArguments, BreakpointLocationsResponse> responder)
+	{
+		try
+		{
+			var arguments = responder.Arguments;
+			if (arguments.Source?.Path is null)
+				throw new ProtocolException("Missing source path");
+			var startLine = ConvertClientLineToDebugger(arguments.Line);
+			var endLine = arguments.EndLine is int lastLine ? ConvertClientLineToDebugger(lastLine) : (int?)null;
+			var locations = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetBreakpointLocations(
+				arguments.Source.Path, startLine, arguments.Column, endLine, arguments.EndColumn));
+			responder.SetResponse(new BreakpointLocationsResponse
+			{
+				Breakpoints = locations.Select(l => new BreakpointLocation
+				{
+					Line = ConvertDebuggerLineToClient(l.Line),
+					Column = ConvertDebuggerColumnToClient(l.Column),
+					EndLine = ConvertDebuggerLineToClient(l.EndLine),
+					EndColumn = ConvertDebuggerColumnToClient(l.EndColumn)
+				}).ToList()
+			});
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleBreakpointLocationsRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to get breakpoint locations: {ex.Message}", ex));
+		}
+	}
+
+	protected override async void HandleLoadedSourcesRequestAsync(IRequestResponder<LoadedSourcesArguments, LoadedSourcesResponse> responder)
+	{
+		try
+		{
+			var sources = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetLoadedSources());
+			responder.SetResponse(new LoadedSourcesResponse
+			{
+				Sources = sources.Select(CreateSource).ToList()
+			});
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleLoadedSourcesRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to get loaded sources: {ex.Message}", ex));
+		}
+	}
+
+	protected override async void HandleGotoTargetsRequestAsync(IRequestResponder<GotoTargetsArguments, GotoTargetsResponse> responder)
+	{
+		try
+		{
+			var arguments = responder.Arguments;
+			if (arguments.Source?.Path is null)
+				throw new ProtocolException("Missing source path");
+			var line = ConvertClientLineToDebugger(arguments.Line);
+			var targets = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetGotoTargets(arguments.Source.Path, line, arguments.Column));
+			var responseTargets = new List<GotoTarget>();
+			foreach (var target in targets)
+			{
+				var id = Interlocked.Increment(ref _nextGotoTargetId);
+				_gotoTargets[id] = (arguments.Source.Path, target.Line, target.Column);
+				responseTargets.Add(new GotoTarget
+				{
+					Id = id,
+					Label = Path.GetFileName(arguments.Source.Path) + ":" + target.Line,
+					Line = ConvertDebuggerLineToClient(target.Line),
+					Column = ConvertDebuggerColumnToClient(target.Column),
+					EndLine = ConvertDebuggerLineToClient(target.EndLine),
+					EndColumn = ConvertDebuggerColumnToClient(target.EndColumn)
+				});
+			}
+			responder.SetResponse(new GotoTargetsResponse { Targets = responseTargets });
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleGotoTargetsRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to get goto targets: {ex.Message}", ex));
+		}
+	}
+
+	protected override async void HandleGotoRequestAsync(IRequestResponder<GotoArguments> responder)
+	{
+		try
+		{
+			var arguments = responder.Arguments;
+			if (!_gotoTargets.TryRemove(arguments.TargetId, out var target))
+				throw new ProtocolException($"Unknown goto target {arguments.TargetId}.");
+			var location = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.SetNextStatement(arguments.ThreadId, target.File, target.Line, target.Column));
+			responder.SetResponse(new GotoResponse());
+			var stoppedEvent = new StoppedEvent
+			{
+				Reason = StoppedEvent.ReasonValue.Goto,
+				ThreadId = arguments.ThreadId,
+				AllThreadsStopped = true
+			};
+			stoppedEvent.AdditionalProperties["source"] = JToken.FromObject(CreateSource(target.File));
+			stoppedEvent.AdditionalProperties["line"] = JToken.FromObject(ConvertDebuggerLineToClient(location.Line));
+			stoppedEvent.AdditionalProperties["column"] = JToken.FromObject(ConvertDebuggerColumnToClient(location.Column));
+			Protocol.SendEvent(stoppedEvent);
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleGotoRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to goto target: {ex.Message}", ex));
+		}
+	}
+
+	protected override async void HandleSourceRequestAsync(IRequestResponder<SourceArguments, SourceResponse> responder)
+	{
+		try
+		{
+			var arguments = responder.Arguments;
+			// Embedded source (sourceReference) takes precedence: the file may not exist on disk.
+			if (arguments.SourceReference > 0 && _debugger.TryGetEmbeddedSourceText(arguments.SourceReference, out var embedded))
+			{
+				responder.SetResponse(new SourceResponse(embedded) { MimeType = "text/x-csharp" });
+				return;
+			}
+			var path = arguments.Source?.Path;
+			if (string.IsNullOrEmpty(path) || !File.Exists(path))
+				throw new ProtocolException($"Source not found: {path ?? "(sourceReference " + arguments.SourceReference + ")"}");
+			var content = await File.ReadAllTextAsync(path);
+			responder.SetResponse(new SourceResponse(content) { MimeType = "text/x-csharp" });
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleSourceRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to get source: {ex.Message}", ex));
+		}
+	}
+
+	protected override async void HandleRestartRequestAsync(IRequestResponder<RestartArguments> responder)
+	{
+		try
+		{
+			await ExecuteWithDebuggerProcessingLockAsync(async () =>
+			{
+				// A launch restart terminates the old debuggee; an attach restart only detaches.
+				_debugger.Disconnect(_lastLaunchInfo is not null);
+				_debugger = new ManagedDebugger(_logger);
+				SubscribeToDebuggerEvents();
+				if (_lastLaunchInfo is not null)
+					_debugger.Launch(_lastLaunchInfo, _lastJustMyCode);
+				else if (_lastAttachProcessId is int processId)
+					_debugger.Attach(processId, _lastJustMyCode);
+				else if (_lastRemoteAttachInfo is not null)
+					_debugger.AttachRemote(_lastRemoteAttachInfo, _lastJustMyCode);
+				else
+					throw new ProtocolException("There is no launch or attach to restart.");
+				await _debugger.ConfigurationDone();
+			});
+			responder.SetResponse(new RestartResponse());
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleRestartRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to restart: {ex.Message}", ex));
 		}
 	}
 
@@ -581,6 +784,30 @@ public class DebugAdapter : DebugAdapterBase
 			"user-unhandled" => SharpDbgExceptionBreakpointFilter.UserUnhandled,
 			_ => throw new ProtocolException($"Unknown exception breakpoint filter: '{filter}'")
 		};
+	}
+
+	protected override async void HandleModulesRequestAsync(IRequestResponder<ModulesArguments, ModulesResponse> responder)
+	{
+		try
+		{
+			var modules = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetModules());
+			responder.SetResponse(new ModulesResponse
+			{
+				TotalModules = modules.Count,
+				Modules = modules.Select(m => new MSModule
+				{
+					Id = m.Id,
+					Name = m.Name,
+					Path = m.Path,
+					IsUserCode = m.IsUserCode
+				}).ToList()
+			});
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleModulesRequestAsync failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to get modules: {ex.Message}", ex));
+		}
 	}
 
 	protected override async void HandleThreadsRequestAsync(IRequestResponder<ThreadsArguments, ThreadsResponse> responder)
@@ -652,12 +879,27 @@ public class DebugAdapter : DebugAdapterBase
 			EndLine = frame.EndLine is int endLine ? ConvertDebuggerLineToClient(endLine) : null,
 			Column = ConvertDebuggerColumnToClient(frame.Column),
 			EndColumn = frame.EndColumn is int endColumn ? ConvertDebuggerColumnToClient(endColumn) : null,
-			Source = frame.Source is not null ? new Source { Path = frame.Source, Name = Path.GetFileName(frame.Source), SourceReference = 0 } : null,
-			PresentationHint = frame.IsUserCode ? null : MSStackFrame.PresentationHintValue.Subtle
+			Source = frame.Source is not null ? CreateSource(frame.Source, frame.SourceReference) : null,
+			PresentationHint = frame.IsUserCode ? null : MSStackFrame.PresentationHintValue.Subtle,
+			InstructionPointerReference = frame.InstructionPointerReference
 		};
 		protocolFrame.IsResolved = frame.IsResolved;
 		protocolFrame.DecompiledSourceInfo = frame.DecompiledSourceInfo;
 		return protocolFrame;
+	}
+
+	private async void HandleSourceLinkRequest(IRequestResponder<SourceLinkArguments, SourceLinkResponse> responder)
+	{
+		try
+		{
+			var url = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetSourceLinkUrl(responder.Arguments.Path));
+			responder.SetResponse(new SourceLinkResponse { Url = url });
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleSourceLinkRequest failed: {ex.Message} , {ex}");
+			responder.SetError(new ProtocolException($"Failed to get source link: {ex.Message}", ex));
+		}
 	}
 
 	protected override async void HandleScopesRequestAsync(IRequestResponder<ScopesArguments, ScopesResponse> responder)
@@ -689,16 +931,24 @@ public class DebugAdapter : DebugAdapterBase
 	{
 		try
 		{
-			var variables = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetVariables(responder.Arguments.VariablesReference));
+			var arguments = responder.Arguments;
+			var variables = await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.GetVariables(arguments.VariablesReference));
 
-			var responseVariables = variables.Select(v => new Variable
+			// Variable paging: the client asks for a window (start/count) and keeps asking until fewer
+			// than count come back.
+			IEnumerable<VariableInfo> paged = variables;
+			if (arguments.Start is int start && start > 0) paged = paged.Skip(start);
+			if (arguments.Count is int count) paged = paged.Take(count);
+
+			var responseVariables = paged.Select(v => new Variable
 			{
 				Name = v.Name,
 				EvaluateName = v.Name,
 				Value = v.Value,
 				Type = v.Type,
 				PresentationHint = v.PresentationHint?.ToDto(),
-				VariablesReference = v.VariablesReference
+				VariablesReference = v.VariablesReference,
+				MemoryReference = v.MemoryReference
 			}).ToList();
 
 			var response = new VariablesResponse
@@ -726,7 +976,8 @@ public class DebugAdapter : DebugAdapterBase
 				Result = variableInfo.Value,
 				Type = variableInfo.Type,
 				VariablesReference = variableInfo.VariablesReference,
-				PresentationHint = variableInfo.PresentationHint?.ToDto()
+				PresentationHint = variableInfo.PresentationHint?.ToDto(),
+				MemoryReference = variableInfo.MemoryReference
 			};
 			responder.SetResponse(response);
 		}
@@ -744,7 +995,7 @@ public class DebugAdapter : DebugAdapterBase
 			await ExecuteWithDebuggerProcessingLockAsync(() => _debugger.HandleContinueRequest());
 			responder.SetResponse(new ContinueResponse
 			{
-				AllThreadsContinued = true
+				AllThreadsContinued = !(responder.Arguments.SingleThread ?? false)
 			});
 		}
 		catch (Exception ex)
@@ -907,6 +1158,31 @@ public class DebugAdapter : DebugAdapterBase
 	private int ConvertDebuggerColumnToClient(int column)
 	{
 		return _clientColumnsStartAt1 ? column : column - 1;
+	}
+
+	/// <summary>A DAP Source with the file's SHA-256 checksum, so a client can match a breakpoint by
+	/// content rather than by path alone.</summary>
+	private static Source CreateSource(string filePath, int sourceReference = 0) => new Source
+	{
+		Path = filePath,
+		Name = Path.GetFileName(filePath),
+		SourceReference = sourceReference,
+		Checksums = ComputeSourceChecksums(filePath)
+	};
+
+	private static List<Checksum>? ComputeSourceChecksums(string filePath)
+	{
+		try
+		{
+			if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+				return null;
+			var hash = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(filePath));
+			return [new Checksum { Algorithm = ChecksumAlgorithm.SHA256, ChecksumValue = Convert.ToHexString(hash) }];
+		}
+		catch
+		{
+			return null;
+		}
 	}
 
 	private static StoppedEvent.ReasonValue ConvertStopReason(string reason)
