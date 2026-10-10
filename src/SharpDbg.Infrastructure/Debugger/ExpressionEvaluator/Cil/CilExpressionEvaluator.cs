@@ -13,6 +13,7 @@ internal sealed class CilExpressionEvaluator(RuntimeAssemblyPrimitiveTypeClasses
 	{
 		try
 		{
+			expression = SubstitutePseudoVariables(expression, context);
 			if (expression == "$exception" && debugger.GetCurrentException(context.ThreadId) is { } currentException)
 			{
 				if (currentException is not ICorDebugReferenceValue { IsNull: false } reference)
@@ -33,6 +34,17 @@ internal sealed class CilExpressionEvaluator(RuntimeAssemblyPrimitiveTypeClasses
 		{
 			return new EvaluationResult { Error = $"error: {ex.Message}" };
 		}
+	}
+
+	/// <summary>Expands the debugger pseudo-variables <c>$tid</c> and <c>$pid</c> to their numeric
+	/// values before the expression is compiled.</summary>
+	private string SubstitutePseudoVariables(string expression, CompiledExpressionEvaluationContext context)
+	{
+		if (expression.Contains("$tid", StringComparison.Ordinal))
+			expression = expression.Replace("$tid", context.ThreadId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+		if (expression.Contains("$pid", StringComparison.Ordinal) && debugger.ProcessId is int processId)
+			expression = expression.Replace("$pid", processId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+		return expression;
 	}
 }
 

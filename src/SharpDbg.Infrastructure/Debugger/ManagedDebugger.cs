@@ -38,8 +38,16 @@ public partial class ManagedDebugger
 	private bool _isAttached;
 	private bool _isRemoteAttach;
 	private int? _pendingAttachProcessId;
+	private int? _attachedProcessId;
 	private bool _justMyCode;
 	private bool _stopAtEntry;
+	private bool _noDebug;
+	private int _moduleIdCounter;
+
+	/// <summary>Whether an object's overridden ToString() may be called for display (ExpressionEvaluationOptions.allowToString).</summary>
+	public static bool AllowToString { get; set; } = true;
+	/// <summary>Whether DebuggerDisplay/ToString are suppressed and the raw value is shown (ExpressionEvaluationOptions.showRawValues).</summary>
+	public static bool ShowRawValues { get; set; }
 	private EntryBreakpoint? _entryBreakpoint;
 	private sealed record EntryBreakpoint(ICorDebugFunctionBreakpoint CorBreakpoint, CORDB_ADDRESS ModuleBaseAddress, int MethodToken, int IlOffset);
 
@@ -54,6 +62,9 @@ public partial class ManagedDebugger
 
 	private Process? _debuggeeProcess;
 
+	/// <summary>The debuggee process id, for the <c>$pid</c> pseudo-variable.</summary>
+	public int? ProcessId => _debuggeeProcess?.Id ?? _attachedProcessId;
+
 	public event Action<int, string>? OnStopped;
 	// ThreadId, FilePath, Line, Column, Reason, HitBreakpointIds, DecompiledSourceInfo
 	public event Action<int, string, int, int, string, List<int>?>? OnStopped2;
@@ -62,11 +73,15 @@ public partial class ManagedDebugger
 	public event Action? OnTerminated;
 	public event Action<int>? OnThreadStarted;
 	public event Action<int>? OnThreadExited;
-	public event Action<string, string, string>? OnModuleLoaded;
-	public event Action<string, string, string>? OnModuleUnloaded;
+	// ModuleId, Name, Path
+	public event Action<int, string, string>? OnModuleLoaded;
+	public event Action<int, string, string>? OnModuleUnloaded;
+	// Reason ("new"/"removed"), SourcePath
+	public event Action<string, string>? OnLoadedSource;
 	// Output text, isError (true for stderr, false for stdout)
 	public event Action<string, bool>? OnOutput;
-	public event Action<int, string>? OnProcessStarted;
+	// ProcessId, Name, IsAttach
+	public event Action<int, string, bool>? OnProcessStarted;
 	public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
 	public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
 
@@ -212,6 +227,9 @@ public partial class ManagedDebugger
 			_corDebug = await ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
 
 			_logger?.Invoke($"Attached to process: {processId}");
+			var name = "";
+			try { name = Process.GetProcessById(processId).ProcessName; } catch { /* the process may have exited */ }
+			OnProcessStarted?.Invoke(processId, name, true);
 			SendAllBreakpointEvents();
 		});
 	}

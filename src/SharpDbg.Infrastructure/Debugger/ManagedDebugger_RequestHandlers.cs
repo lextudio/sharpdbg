@@ -14,10 +14,13 @@ using ZLinq;
 
 namespace SharpDbg.Infrastructure.Debugger;
 
-public record SharpDbgBreakpointRequest(int Line, string? Condition = null, string? HitCondition = null, int? Column = null);
+public record SharpDbgBreakpointRequest(int Line, string? Condition = null, string? HitCondition = null, int? Column = null, string? LogMessage = null);
 public record SharpDbgFunctionBreakpointRequest(string Name, string? Condition = null, string? HitCondition = null);
 public record SharpDbgExceptionBreakpointRequest(SharpDbgExceptionBreakpointFilter Filter, string? Condition = null);
 public enum SharpDbgExceptionBreakpointFilter { All, UserUnhandled }
+
+/// <summary>A loaded module, for the DAP modules request.</summary>
+public sealed record ModuleDescriptor(int Id, string Name, string Path, bool IsUserCode);
 
 public partial class ManagedDebugger
 {
@@ -34,6 +37,7 @@ public partial class ManagedDebugger
 		_logger?.Invoke($"Launching program: {launchInfo.Program} {string.Join(' ', launchInfo.Arguments)}");
 		_justMyCode = justMyCode;
 		_stopAtEntry = launchInfo.StopAtEntry;
+		_noDebug = launchInfo.NoDebug;
 		_pendingLaunchInfo = launchInfo;
 	}
 
@@ -94,7 +98,7 @@ public partial class ManagedDebugger
 		_corDebug = await ClrDebugExtensions.Automatic(processId, true, corDebug => AttachAtRuntimeStartup(corDebug, processId));
 
 		_logger?.Invoke($"Successfully attached to process: {processId}");
-		OnProcessStarted?.Invoke(processId, launchInfo.Program);
+		OnProcessStarted?.Invoke(processId, launchInfo.Program, false);
 		SendAllBreakpointEvents();
 		return;
 
@@ -109,6 +113,52 @@ public partial class ManagedDebugger
 			{
 				_logger?.Invoke($"Error forwarding debuggee output: {ex.Message}");
 			}
+		}
+	}
+
+	/// <summary>Run Without Debugging: start the process, stream its output and report its exit code,
+	/// without attaching ICorDebug (so there are no stops, breakpoints or evaluation).</summary>
+	private void PerformLaunchWithoutDebugging()
+	{
+		var launchInfo = _pendingLaunchInfo!;
+		_pendingLaunchInfo = null;
+
+		var processStartInfo = new ProcessStartInfo
+		{
+			FileName = launchInfo.Program,
+			WorkingDirectory = launchInfo.Cwd ?? Environment.CurrentDirectory,
+			UseShellExecute = false,
+			CreateNoWindow = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			RedirectStandardInput = false,
+		};
+		foreach (var arg in launchInfo.Arguments)
+			processStartInfo.ArgumentList.Add(arg);
+		foreach (var (key, value) in launchInfo.Env)
+			processStartInfo.Environment[key] = value;
+
+		var process = Process.Start(processStartInfo) ?? throw new InvalidOperationException("Process start failed");
+		_debuggeeProcess = process;
+		process.OutputDataReceived += (_, e) => { if (e.Data is not null) ForwardOutput(e.Data + Environment.NewLine, isError: false); };
+		process.ErrorDataReceived += (_, e) => { if (e.Data is not null) ForwardOutput(e.Data + Environment.NewLine, isError: true); };
+		process.BeginOutputReadLine();
+		process.BeginErrorReadLine();
+		process.EnableRaisingEvents = true;
+		process.Exited += (_, _) =>
+		{
+			int? exitCode = null;
+			try { exitCode = process.ExitCode; } catch { /* the process handle may already be gone */ }
+			OnExited?.Invoke(exitCode);
+		};
+
+		_logger?.Invoke($"Process created without debugging, PID: {process.Id}");
+		OnProcessStarted?.Invoke(process.Id, launchInfo.Program, false);
+
+		void ForwardOutput(string output, bool isError)
+		{
+			try { OnOutput?.Invoke(output, isError); }
+			catch (Exception ex) { _logger?.Invoke($"Error forwarding debuggee output: {ex.Message}"); }
 		}
 	}
 
@@ -141,6 +191,7 @@ public partial class ManagedDebugger
 		_justMyCode = justMyCode;
 		_stopAtEntry = false;
 		_pendingAttachProcessId = processId;
+		_attachedProcessId = processId;
 	}
 
 	public void AttachRemote(RemoteAttachInfo remoteAttachInfo, bool justMyCode)
@@ -169,7 +220,8 @@ public partial class ManagedDebugger
 		}
 		else if (_pendingLaunchInfo is not null) // If we have a pending launch, perform it
 		{
-			await PerformLaunch();
+			if (_pendingLaunchInfo.NoDebug) PerformLaunchWithoutDebugging();
+			else await PerformLaunch();
 		}
 		else if (_pendingRemoteAttachInfo is not null)
 		{
@@ -354,7 +406,7 @@ public partial class ManagedDebugger
 		var result = new List<BreakpointManager.BreakpointInfo>();
 		foreach (var request in breakpoints)
 		{
-			var bp = _breakpointManager.CreateBreakpoint(filePath, request.Line, request.Column, request.Condition, request.HitCondition);
+			var bp = _breakpointManager.CreateBreakpoint(filePath, request.Line, request.Column, request.Condition, request.HitCondition, request.LogMessage);
 			if (request.Condition is not null && SyntaxFactory.ParseExpression(request.Condition).DescendantNodesAndSelf().Any(static node => node is AnonymousFunctionExpressionSyntax))
 			{
 				bp.Message = "Lambda expressions are not supported in breakpoint conditions.";
@@ -531,6 +583,7 @@ public partial class ManagedDebugger
 		{
 			var function = ilFrame.Function;
 			var module = _modules[function.Module.BaseAddress];
+			stackFrameInfo.InstructionPointerReference = "0x" + function.Token + "+0x" + ilFrame.IP.pnOffset;
 			// returns null if the function is not a state machine method
 			var kickoffMethodToken = module.MetadataReader.GetStateMachineKickoffMethodToken(function.Token);
 			stackFrameInfo.Name = GetMethodFormattedName(module, kickoffMethodToken ?? function.Token, ilFrame.TypeParameters);
@@ -545,6 +598,7 @@ public partial class ManagedDebugger
 				stackFrameInfo.EndColumn = sourceInfo.Value.EndColumn;
 				stackFrameInfo.Source = sourceInfo.Value.FilePath;
 				stackFrameInfo.DecompiledSourceInfo = sourceInfo.Value.DecompiledSourceInfo;
+				stackFrameInfo.SourceReference = GetEmbeddedSourceReference(module, sourceInfo.Value.FilePath);
 			}
 		}
 		else if (frame is ICorDebugInternalFrame internalFrame)
@@ -714,6 +768,100 @@ public partial class ManagedDebugger
 	/// <summary>
 	/// Evaluate an expression
 	/// </summary>
+	/// <summary>Valid breakpoint positions for a source range, aggregated across loaded modules.</summary>
+	public IReadOnlyList<(int Line, int Column, int EndLine, int EndColumn)> GetBreakpointLocations(
+		string filePath, int line, int? column, int? endLine, int? endColumn)
+	{
+		var result = new List<(int Line, int Column, int EndLine, int EndColumn)>();
+		foreach (var module in _modules.Values)
+		{
+			var reader = module.MetadataReader;
+			if (reader is null) continue;
+			result.AddRange(reader.GetBreakpointLocations(filePath, line, column, endLine, endColumn));
+		}
+		return result;
+	}
+
+	private readonly Dictionary<string, int> _embeddedSourceIds = new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<int, string> _embeddedSources = new();
+	private int _nextEmbeddedSourceId;
+
+	/// <summary>Assigns (or returns) a sourceReference for a document with embedded source, so the
+	/// client can fetch it through the source request.</summary>
+	public int GetEmbeddedSourceReference(ModuleInfo module, string sourceFilePath)
+	{
+		if (!module.MetadataReader.TryGetEmbeddedSource(sourceFilePath, out var text) || text is null)
+			return 0;
+		if (_embeddedSourceIds.TryGetValue(sourceFilePath, out var existing))
+			return existing;
+		var id = ++_nextEmbeddedSourceId;
+		_embeddedSourceIds[sourceFilePath] = id;
+		_embeddedSources[id] = text;
+		return id;
+	}
+
+	public bool TryGetEmbeddedSourceText(int sourceReference, out string text) => _embeddedSources.TryGetValue(sourceReference, out text!);
+
+	/// <summary>The SourceLink URL for a source file, from any loaded module's PDB, or null.</summary>
+	public string? GetSourceLinkUrl(string filePath)
+	{
+		foreach (var module in _modules.Values)
+		{
+			var url = module.MetadataReader.GetSourceLinkUrl(filePath);
+			if (url is not null) return url;
+		}
+		return null;
+	}
+
+	/// <summary>Distinct source files known from the loaded modules' symbols, for loadedSources.</summary>
+	public IReadOnlyList<string> GetLoadedSources()
+	{
+		var result = new List<string>();
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var module in _modules.Values)
+		{
+			var reader = module.MetadataReader;
+			if (reader is null) continue;
+			foreach (var path in reader.GetDocumentPaths())
+			{
+				if (seen.Add(path)) result.Add(path);
+			}
+		}
+		return result;
+	}
+
+	/// <summary>Positions on the requested line where execution can be moved to (gotoTargets).</summary>
+	public IReadOnlyList<(int Line, int Column, int EndLine, int EndColumn)> GetGotoTargets(string filePath, int line, int? column)
+		=> GetBreakpointLocations(filePath, line, column, line, null);
+
+	/// <summary>Moves the active frame's instruction pointer to the statement at the given source
+	/// position (DAP goto / "Set Next Statement"). Returns the new location.</summary>
+	public (int Line, int Column) SetNextStatement(int threadIdInt, string filePath, int line, int? column)
+	{
+		if (!_threads.TryGetValue(threadIdInt, out var threadInfo))
+			throw new InvalidOperationException($"Thread {threadIdInt} does not exist.");
+		var frame = threadInfo.Thread.ActiveFrame;
+		if (frame is not ICorDebugILFrame ilFrame)
+			throw new InvalidOperationException("The active frame is not an IL frame.");
+		var module = _modules[ilFrame.Function.Module.BaseAddress];
+		var resolved = module.MetadataReader.ResolveBreakpoint(filePath, line, column)
+			?? throw new InvalidOperationException($"No statement at {filePath}:{line}.");
+		if (resolved.MethodToken != ilFrame.Function.Token)
+			throw new InvalidOperationException("The target statement is not in the active frame's method.");
+		var offset = resolved.ILOffset;
+		ilFrame.SetIP(offset);
+		return (resolved.StartLine, resolved.StartColumn);
+	}
+
+	/// <summary>The loaded modules, for the DAP modules request.</summary>
+	public IReadOnlyList<ModuleDescriptor> GetModules()
+	{
+		return _modules.Values
+			.OrderBy(m => m.Id)
+			.Select(m => new ModuleDescriptor(m.Id, m.ModuleName, m.ModulePath, m.IsUserCode))
+			.ToList();
+	}
+
 	public async Task<VariableInfo> Evaluate(string expression, int? frameId)
 	{
 		_logger?.Invoke($"Evaluate: {expression}");
@@ -743,6 +891,7 @@ public partial class ManagedDebugger
 			};
 		}
 		var (friendlyTypeName, value, debuggerProxyInstance, resultIsError) = await GetValueForCorDebugValueAsync(result.Value!, threadId, frameStackDepth, true);
+		value = ApplyFormatSpecifier(value, ExtractFormatSpecifier(expression));
 		VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : null;
 		var variablesReference = GetVariablesReference(result.Value!, friendlyTypeName, threadId, frameStackDepth, debuggerProxyInstance);
 		var variableInfo = new VariableInfo
@@ -756,6 +905,27 @@ public partial class ManagedDebugger
 		if (variablesReference != 0) result.RelinquishResultHandleOwnership();
 		return variableInfo;
 	}
+
+	/// <summary>The trailing <c>,spec</c> of an evaluate expression when it is a known format
+	/// specifier (<c>nq</c> no quotes, <c>h</c> hexadecimal, <c>d</c> decimal, <c>ac</c> always
+	/// calculate, <c>raw</c> raw value, <c>hidden</c> hidden members); null otherwise.</summary>
+	private static string? ExtractFormatSpecifier(string expression)
+	{
+		var comma = expression.LastIndexOf(',');
+		if (comma < 0) return null;
+		var specifier = expression[(comma + 1)..].Trim();
+		return specifier is "nq" or "h" or "d" or "ac" or "raw" or "hidden" ? specifier : null;
+	}
+
+	private static string ApplyFormatSpecifier(string value, string? specifier) => specifier switch
+	{
+		"nq" => value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value,
+		"h" => value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value
+			: long.TryParse(value, out var signed) ? "0x" + signed.ToString("x")
+			: ulong.TryParse(value, out var unsigned) ? "0x" + unsigned.ToString("x")
+			: value,
+		_ => value
+	};
 
 	/// <summary>
 	/// Terminate the debugged process
