@@ -89,14 +89,23 @@ public partial class ManagedDebugger
 		ModuleMetadataReader? metadataReader = null;
 		try
 		{
-			if (corModule.IsInMemory)
+			if (_moduleDirectory is not null)
+			{
+				metadataReader = ModuleMetadataReader.TryLoadMatchingModuleFile(_moduleDirectory, modulePath, () => {
+					var metadata = corModule.GetMetaDataInterface<IMetaDataImport>();
+					var status = metadata.TryGetScopeProps(new char[1], 1, out _, out var mvid);
+					return (int)status >= 0 ? mvid : null;
+				});
+			}
+			// The selected file has the target module's MVID; TryLoad also validates its portable PDB.
+			if (metadataReader is null && corModule.IsInMemory)
 			{
 				var size = corModule.Size;
 				var baseAddress2 = corModule.BaseAddress;
 				var (bytes, _) = _process.ReadMemory(baseAddress2, size);
 				metadataReader = ModuleMetadataReader.TryLoadFromBytes(bytes);
 			}
-			else
+			else if (metadataReader is null)
 			{
 				metadataReader = ModuleMetadataReader.TryLoad(modulePath);
 			}
@@ -130,12 +139,12 @@ public partial class ManagedDebugger
 			corModule.SetJMCStatus(true, 0, []);
 		}
 
-		var moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode);
+		var moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode) { Id = ++_moduleIdCounter };
 		_modules[baseAddress] = moduleInfo;
 		ModuleSet_Version++;
 		TryBindEntryBreakpoint(moduleInfo);
 
-		if (moduleName is "System.Private.CoreLib.dll")
+		if (moduleName is "System.Private.CoreLib.dll" or "System.Private.CoreLib")
 		{
 			// we need to map value classes to primitive types to allow evaluation to invoke methods on them
 			MapRuntimePrimitiveTypesToCorDebugClass(corModule);
@@ -145,7 +154,12 @@ public partial class ManagedDebugger
 		}
 
 		// Fire the module loaded event
-		OnModuleLoaded?.Invoke(modulePath, Path.GetFileName(modulePath), modulePath);
+		OnModuleLoaded?.Invoke(moduleInfo.Id, moduleInfo.ModuleName, moduleInfo.ModulePath);
+		if (metadataReader.HasSymbols)
+		{
+			foreach (var sourcePath in metadataReader.GetDocumentPaths())
+				OnLoadedSource?.Invoke("new", sourcePath);
+		}
 
 		// Try to bind any pending breakpoints now that we have a new module with symbols
 		if (metadataReader.HasSymbols)
@@ -172,6 +186,11 @@ public partial class ManagedDebugger
 		}
 
 		_logger?.Invoke($"Module unloaded: {moduleInfo.ModulePath} from 0x{(long)baseAddress:X}");
+		if (moduleInfo.MetadataReader.HasSymbols)
+		{
+			foreach (var sourcePath in moduleInfo.MetadataReader.GetDocumentPaths())
+				OnLoadedSource?.Invoke("removed", sourcePath);
+		}
 		moduleInfo.Dispose();
 		ModuleSet_Version++;
 
@@ -198,7 +217,7 @@ public partial class ManagedDebugger
 			OnBreakpointChanged?.Invoke(breakpoint);
 		}
 
-		OnModuleUnloaded?.Invoke(moduleInfo.ModulePath, moduleInfo.ModuleName, moduleInfo.ModulePath);
+		OnModuleUnloaded?.Invoke(moduleInfo.Id, moduleInfo.ModuleName, moduleInfo.ModulePath);
 		Continue();
 	}
 
@@ -335,6 +354,15 @@ public partial class ManagedDebugger
 					_logger?.Invoke($"Conditional breakpoint condition not met: {managedBreakpoint.Condition}");
 					continue;
 				}
+			}
+
+			// Logpoint: log the message and continue instead of stopping.
+			if (managedBreakpoint.LogMessage is not null)
+			{
+				var message = await FormatLogMessage(corThread, managedBreakpoint.LogMessage);
+				_logger?.Invoke($"Logpoint hit: {message}");
+				OnOutput?.Invoke(message + Environment.NewLine, false);
+				continue;
 			}
 
 			hitBreakpoints.Add(managedBreakpoint);
