@@ -15,7 +15,7 @@ public static class Program
 		var myAsyncMethodEvalClass = new AsyncMethodEvalClass();
 		var myClassNoMembers = new MyClassNoMembers();
 		var hitConditionClass = new HitConditionClass();
-		var variablesClass = new VariablesClass();
+		var variablesClass = new VariablesClass();var nativeTypesClass = new NativeTypesClass();
 		var columnBreakpointClass = new ColumnBreakpointClass();
 		var exceptionToThrow = ExceptionToThrow.None;
 		while (true)
@@ -25,7 +25,7 @@ public static class Program
 			myClass.MyMethod(13, 6);
 			myClassNoMembers.MyMethod(42);
 			hitConditionClass.Test();
-			variablesClass.Test();
+			variablesClass.Test();nativeTypesClass.Test();
 			columnBreakpointClass.Test();
 			MultilineSwitchInMethodCall.Test();
 			ClassWithBclCall.Test(4);

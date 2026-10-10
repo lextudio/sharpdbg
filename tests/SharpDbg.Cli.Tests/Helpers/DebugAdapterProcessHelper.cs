@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using SharpDbg.Infrastructure.Debugger;
@@ -59,30 +60,31 @@ public static class DebugAdapterProcessHelper
 	{
 		return new AttachArguments
 		{
-			AdditionalProperties = new JsonObject
+			AdditionalProperties = new Dictionary<string, JsonElement>
 			{
-				["name"] = "AttachRequestName",
-				["type"] = "coreclr",
-				["processId"] = processId,
-				["console"] = "internalConsole", // integratedTerminal, externalTerminal, internalConsole
-				["justMyCode"] = justMyCode
+				["name"] = JsonSerializer.SerializeToElement("AttachRequestName"),
+				["type"] = JsonSerializer.SerializeToElement("coreclr"),
+				["processId"] = JsonSerializer.SerializeToElement(processId),
+				["console"] = JsonSerializer.SerializeToElement("internalConsole"), // integratedTerminal, externalTerminal, internalConsole
+				["justMyCode"] = JsonSerializer.SerializeToElement(justMyCode)
 			}
 		};
 	}
 
-	public static LaunchArguments GetLaunchRequest(string program, bool stopAtEntry, bool justMyCode = true)
+	public static LaunchArguments GetLaunchRequest(string program, bool stopAtEntry, bool justMyCode = true, bool noDebug = false)
 	{
 		return new LaunchArguments
 		{
-			AdditionalProperties = new JsonObject
+			AdditionalProperties = new Dictionary<string, JsonElement>
 			{
-				["name"] = "LaunchRequestName",
-				["type"] = "coreclr",
-				["program"] = program,
-				["cwd"] = Path.GetDirectoryName(program),
-				["console"] = "internalConsole",
-				["justMyCode"] = justMyCode,
-				["stopAtEntry"] = stopAtEntry
+				["name"] = JsonSerializer.SerializeToElement("LaunchRequestName"),
+				["type"] = JsonSerializer.SerializeToElement("coreclr"),
+				["program"] = JsonSerializer.SerializeToElement(program),
+				["cwd"] = JsonSerializer.SerializeToElement(Path.GetDirectoryName(program)),
+				["console"] = JsonSerializer.SerializeToElement("internalConsole"),
+				["justMyCode"] = JsonSerializer.SerializeToElement(justMyCode),
+				["stopAtEntry"] = JsonSerializer.SerializeToElement(stopAtEntry),
+				["noDebug"] = JsonSerializer.SerializeToElement(noDebug)
 			}
 		};
 	}
@@ -122,7 +124,8 @@ public static class DebugAdapterProcessHelper
 				Line = s.Line,
 				Column = s.Column,
 				Condition = s.Condition,
-				HitCondition = s.HitCondition
+				HitCondition = s.HitCondition,
+				LogMessage = s.LogMessage
 			}).ToList()
 		};
 		return setBreakpointsRequest;

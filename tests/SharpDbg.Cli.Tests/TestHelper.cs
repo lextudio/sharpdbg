@@ -36,10 +36,10 @@ public static partial class TestHelper
 		return GetRunningDebugProtocolHostCore(testOutputHelper, startSuspended, process.StandardInput.BaseStream, process.StandardOutput.BaseStream, new ProcessKiller(process));
 	}
 
-	public static (DebugProtocolHost, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostInProc(ITestOutputHelper testOutputHelper, bool startSuspended)
+	public static (DebugProtocolHost, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostInProc(ITestOutputHelper testOutputHelper, bool startSuspended, string appName = "DebuggableConsoleApp")
 	{
 		var (input, output, debugAdapterDisposable) = SharpDbgInMemory.NewDebugAdapterStreams(Log);
-		return GetRunningDebugProtocolHostCore(testOutputHelper, startSuspended, input, output, debugAdapterDisposable);
+		return GetRunningDebugProtocolHostCore(testOutputHelper, startSuspended, input, output, debugAdapterDisposable, appName);
 		void Log(string message)
 		{
 			testOutputHelper.WriteLine($"Log [SharpDbg]: {message}");
@@ -54,9 +54,9 @@ public static partial class TestHelper
 		return (host, adapter);
 	}
 
-	private static (DebugProtocolHost, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostCore(ITestOutputHelper testOutputHelper, bool startSuspended, Stream input, Stream output, IDisposable debugAdapterDisposable)
+	private static (DebugProtocolHost, IDisposable DebugAdapterDisposable, Process DebuggableProcess) GetRunningDebugProtocolHostCore(ITestOutputHelper testOutputHelper, bool startSuspended, Stream input, Stream output, IDisposable debugAdapterDisposable, string appName = "DebuggableConsoleApp")
 	{
-		var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended);
+		var debuggableProcess = DebuggableProcessHelper.StartDebuggableProcess(startSuspended, appName);
 		var debugProtocolHost = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper);
 		debugProtocolHost.Run();
 		return (debugProtocolHost, debugAdapterDisposable, debuggableProcess);
@@ -76,9 +76,9 @@ public static partial class TestHelper
 		return debugProtocolHost;
 	}
 
-	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, bool stopAtEntry, bool justMyCode)
+	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, bool stopAtEntry, bool justMyCode, bool noDebug = false)
 	{
-		debugProtocolHost.SendRequestSync(DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry, justMyCode));
+		debugProtocolHost.SendRequestSync(DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry, justMyCode, noDebug));
 		return debugProtocolHost;
 	}
 	public static async Task<DebugProtocolHost> WaitForInitializedEvent(this DebugProtocolHost debugProtocolHost)
@@ -136,10 +136,35 @@ public static partial class TestHelper
 		return debugProtocolHost;
 	}
 
+	/// The runtime opens its diagnostic socket a moment after the process starts (longer for an app that has not run for
+	/// a while), and a test reaches this point as soon as the adapter has answered its requests: retry until the socket exists.
+	private static void ResumeRuntimeWhenReady(int processId)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+		while (true)
+		{
+			try
+			{
+				new DiagnosticsClient(processId).ResumeRuntime();
+				return;
+			}
+			catch (ServerNotAvailableException) when (DateTime.UtcNow < deadline && IsAlive(processId))
+			{
+				System.Threading.Thread.Sleep(50);
+			}
+		}
+
+		static bool IsAlive(int processId)
+		{
+			try { return !Process.GetProcessById(processId).HasExited; }
+			catch (ArgumentException) { return false; }
+		}
+	}
+
 	public static DebugProtocolHost WithOptionalResumeRuntime(this DebugProtocolHost debugProtocolHost, int processId, bool startSuspended)
 	{
 		// DiagnosticsClient.ResumeRuntime seems to have a different implementation on MacOS - it will throw if the runtime is not paused...
-		if (startSuspended) new DiagnosticsClient(processId).ResumeRuntime();
+		if (startSuspended) ResumeRuntimeWhenReady(processId);
 		return debugProtocolHost;
 	}
 
