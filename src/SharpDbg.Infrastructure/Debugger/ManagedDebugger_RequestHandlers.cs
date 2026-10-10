@@ -20,7 +20,7 @@ public record SharpDbgExceptionBreakpointRequest(SharpDbgExceptionBreakpointFilt
 public enum SharpDbgExceptionBreakpointFilter { All, UserUnhandled }
 
 /// <summary>A loaded module, for the DAP modules request.</summary>
-public sealed record ModuleDescriptor(int Id, string Name, string Path, bool IsUserCode);
+public sealed record ModuleDescriptor(int Id, string Name, string Path, bool IsUserCode, bool HasSymbols);
 
 public partial class ManagedDebugger
 {
@@ -858,7 +858,7 @@ public partial class ManagedDebugger
 	{
 		return _modules.Values
 			.OrderBy(m => m.Id)
-			.Select(m => new ModuleDescriptor(m.Id, m.ModuleName, m.ModulePath, m.IsUserCode))
+			.Select(m => new ModuleDescriptor(m.Id, m.ModuleName, m.ModulePath, m.IsUserCode, m.MetadataReader.HasSymbols))
 			.ToList();
 	}
 

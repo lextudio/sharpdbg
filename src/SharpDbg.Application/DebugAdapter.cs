@@ -799,7 +799,8 @@ public class DebugAdapter : DebugAdapterBase
 					Id = m.Id,
 					Name = m.Name,
 					Path = m.Path,
-					IsUserCode = m.IsUserCode
+					IsUserCode = m.IsUserCode,
+					SymbolStatus = m.HasSymbols ? "loaded" : "not loaded"
 				}).ToList()
 			});
 		}
