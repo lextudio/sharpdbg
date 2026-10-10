@@ -762,6 +762,14 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
 			double => CorElementType.R8,
 			_ => throw new NotSupportedException($"Cannot materialize CIL value '{value.Value.GetType().Name}'")
 		};
+		// ICorDebugEval.CreateValue rejects the native-int element types (I/U) with E_INVALIDARG;
+		// create a same-size integer value instead, so an nint/nuint result materializes.
+		elementType = elementType switch
+		{
+			CorElementType.I => IntPtr.Size == 8 ? CorElementType.I8 : CorElementType.I4,
+			CorElementType.U => IntPtr.Size == 8 ? CorElementType.U8 : CorElementType.U4,
+			_ => elementType
+		};
 		var result = eval.CreateValue(elementType, null);
 		var generic = (ICorDebugGenericValue)result;
 		var materializedValue = elementType == CorElementType.BOOLEAN ? value.IsTrue() : value.Value;
