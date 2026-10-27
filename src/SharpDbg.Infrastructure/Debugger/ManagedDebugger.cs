@@ -207,9 +207,12 @@ public partial class ManagedDebugger
 	// Runs inside the dbgshim runtime-startup callback, before the runtime is allowed to continue
 	private void AttachAtRuntimeStartup(ICorDebug corDebug, int processId)
 	{
+		// Each step is logged: a session that never reports "Attached" must show whether dbgshim called back at all
+		_logger?.Invoke($"Runtime startup callback for process {processId}");
 		corDebug.Initialize();
 		corDebug.SetManagedHandler(_callbacks);
 		_process = corDebug.DebugActiveProcess(processId, false);
+		_logger?.Invoke($"DebugActiveProcess returned for process {processId}");
 		_isAttached = true;
 		ConfigureExceptionCallbacks();
 	}
@@ -225,6 +228,7 @@ public partial class ManagedDebugger
 		// suspended resumes it on that answer, and a registration that came later missed the startup notification,
 		// so the debuggee ran unattached. Automatic registers synchronously before its first await.
 		var attach = ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
+		_logger?.Invoke($"Runtime startup registration done for process {processId} (status: {attach.Status})");
 		_ = Task.Run(async () =>
 		{
 			try
