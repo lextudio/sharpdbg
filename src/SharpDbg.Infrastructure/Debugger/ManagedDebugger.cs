@@ -210,7 +210,9 @@ public partial class ManagedDebugger
 		// Each step is logged: a session that never reports "Attached" must show whether dbgshim called back at all
 		_logger?.Invoke($"Runtime startup callback for process {processId}");
 		corDebug.Initialize();
+		_logger?.Invoke($"ICorDebug initialized for process {processId}");
 		corDebug.SetManagedHandler(_callbacks);
+		_logger?.Invoke($"Managed handler set for process {processId}");
 		_process = corDebug.DebugActiveProcess(processId, false);
 		_logger?.Invoke($"DebugActiveProcess returned for process {processId}");
 		_isAttached = true;
