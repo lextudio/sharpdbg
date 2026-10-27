@@ -81,7 +81,19 @@ public static class ClrDebugExtensions
 
 			if (resumeDiagnosticSuspension) await DiagnosticClientHelper.DiagnosticClientResumeRuntime(pid);
 
-			var result = await runtimeStartupTcs.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+			// A suspended debuggee only starts its runtime once someone resumes it, and on a loaded machine that took
+			// longer than the fixed 5 seconds this used to allow. Wait for as long as the process is alive instead.
+			while (!runtimeStartupTcs.Task.IsCompleted)
+			{
+				try
+				{
+					await runtimeStartupTcs.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+				}
+				catch (TimeoutException) when (DiagnosticClientHelper.IsProcessAlive(pid))
+				{
+				}
+			}
+			var result = await runtimeStartupTcs.Task.ConfigureAwait(false);
 			cordebug = result.CorDebug;
 			hr = result.Hr;
 		}

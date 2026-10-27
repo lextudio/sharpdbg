@@ -221,10 +221,22 @@ public partial class ManagedDebugger
 	{
 		_logger?.Invoke($"Attaching to process: {processId}");
 
-		// Initialize the debugger
+		// Register for runtime startup here, before configurationDone is answered: a client that started the process
+		// suspended resumes it on that answer, and a registration that came later missed the startup notification,
+		// so the debuggee ran unattached. Automatic registers synchronously before its first await.
+		var attach = ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
 		_ = Task.Run(async () =>
 		{
-			_corDebug = await ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
+			try
+			{
+				_corDebug = await attach;
+			}
+			catch (Exception ex)
+			{
+				// Nothing awaits this task, so an attach failure would otherwise leave the session silently unattached
+				_logger?.Invoke($"Attach to process {processId} failed: {ex}");
+				return;
+			}
 
 			_logger?.Invoke($"Attached to process: {processId}");
 			var name = "";
