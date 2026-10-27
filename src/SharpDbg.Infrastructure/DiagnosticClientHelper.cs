@@ -30,7 +30,7 @@ public static class DiagnosticClientHelper
 		}
 	}
 
-	private static bool IsProcessAlive(int processId)
+	internal static bool IsProcessAlive(int processId)
 	{
 		try
 		{
