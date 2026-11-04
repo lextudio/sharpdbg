@@ -38,6 +38,9 @@ public partial class ManagedDebugger
 		_justMyCode = justMyCode;
 		_stopAtEntry = launchInfo.StopAtEntry;
 		_noDebug = launchInfo.NoDebug;
+		// A launch through the terminal attaches through PerformAttach; it must not inherit an earlier attach's options
+		_debuggerLibraryDirectory = null;
+		_continueStoppedProcess = false;
 		_pendingLaunchInfo = launchInfo;
 	}
 
@@ -190,9 +193,11 @@ public partial class ManagedDebugger
 	/// <summary>
 	/// Store process ID for later attach (actual attach happens in ConfigurationDone)
 	/// </summary>
-	public void Attach(int processId, bool justMyCode)
+	public void Attach(int processId, bool justMyCode, string? debuggerLibraryDirectory = null, bool continueStoppedProcess = false)
 	{
 		EnsureNoProcessBeingDebugged();
+		_debuggerLibraryDirectory = debuggerLibraryDirectory;
+		_continueStoppedProcess = continueStoppedProcess;
 		_logger?.Invoke($"Storing attach target: {processId}");
 		_justMyCode = justMyCode;
 		_stopAtEntry = false;

@@ -53,10 +53,16 @@ public static class ClrDebugExtensions
 
 	/// pass resumeDiagnosticSuspension true if the process was launched with the DOTNET_DefaultDiagnosticPortSuspend environment variable, and you wish for it to be resumed after RegisterForRuntimeStartup
 	/// onStartup runs while the runtime is still blocked at startup - initialize, set the managed handler and DebugActiveProcess there
-	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false, Action<ICorDebug>? onStartup = null)
+	/// debuggerLibraryDirectory, when set, is where dbgshim loads mscordbi and the DAC from instead of the target runtime's directory -
+	/// an iOS simulator app ships simulator-platform copies that a macOS debugger process cannot load
+	/// afterRegistration runs synchronously once the registration is in place; if it throws, the registration is ended and the task faults
+	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false, Action<ICorDebug>? onStartup = null, string? debuggerLibraryDirectory = null,
+		Action? afterRegistration = null)
 	{
 		IntPtr unregisterToken = IntPtr.Zero;
 		GCHandle runtimeStartupTcsHandle = default;
+		// Kept alive until the registration ends: dbgshim calls it back when the runtime starts
+		var libraryProvider = debuggerLibraryDirectory is null ? null : new DirectoryLibraryProvider(debuggerLibraryDirectory);
 
 		ICorDebug? cordebug = null;
 		int hr = Cor.COR_E_FAILFAST;
@@ -75,9 +81,12 @@ public static class ClrDebugExtensions
 			runtimeStartupTcsHandle = GCHandle.Alloc(state);
 			unsafe
 			{
-				var registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
+				var registerHr = libraryProvider is null
+					? DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken)
+					: DbgShim.RegisterForRuntimeStartup3(checked((uint)pid), null!, libraryProvider!, &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
 				Marshal.ThrowExceptionForHR(registerHr);
 			}
+			afterRegistration?.Invoke();
 
 			if (resumeDiagnosticSuspension) await DiagnosticClientHelper.DiagnosticClientResumeRuntime(pid);
 
@@ -101,6 +110,7 @@ public static class ClrDebugExtensions
 		{
 			if (unregisterToken != IntPtr.Zero) DbgShim.UnregisterForRuntimeStartup(unregisterToken);
 			if (runtimeStartupTcsHandle.IsAllocated) runtimeStartupTcsHandle.Free();
+			GC.KeepAlive(libraryProvider);
 		}
 
 		//if callbackHR was not S_OK, an error occurred while attempting to register for runtime startup
