@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Threading.Channels;
+using System.Runtime.InteropServices;
 using Ardalis.GuardClauses;
 using ICorDebugSharp;
 using NeoSmart.AsyncLock;
@@ -38,6 +39,8 @@ public partial class ManagedDebugger
 	private bool _isAttached;
 	private bool _isRemoteAttach;
 	private int? _pendingAttachProcessId;
+	private string? _debuggerLibraryDirectory;
+	private bool _continueStoppedProcess;
 	private int? _attachedProcessId;
 	private bool _justMyCode;
 	private bool _stopAtEntry;
@@ -219,6 +222,18 @@ public partial class ManagedDebugger
 		ConfigureExceptionCallbacks();
 	}
 
+	private const int SIGCONT = 19; // macOS only; the attach request rejects continueStoppedProcess elsewhere
+
+	[DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+	private static extern int SendSignal(int pid, int signal);
+
+	private void ContinueStoppedProcess(int processId)
+	{
+		if (SendSignal(processId, SIGCONT) != 0)
+			throw new InvalidOperationException($"Could not continue stopped process {processId} (errno {Marshal.GetLastPInvokeError()})");
+		_logger?.Invoke($"Sent SIGCONT to process {processId}");
+	}
+
 	/// <summary>
 	/// Actually attach to an existing process
 	/// </summary>
@@ -229,7 +244,11 @@ public partial class ManagedDebugger
 		// Register for runtime startup here, before configurationDone is answered: a client that started the process
 		// suspended resumes it on that answer, and a registration that came later missed the startup notification,
 		// so the debuggee ran unattached. Automatic registers synchronously before its first await.
-		var attach = ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId));
+		// A process started stopped (simctl launch --wait-for-debugger) is let go only once the registration is in
+		// place; a failure there ends the registration through Automatic's own cleanup
+		Action? afterRegistration = _continueStoppedProcess ? () => ContinueStoppedProcess(processId) : null;
+		var attach = ClrDebugExtensions.Automatic(processId, onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId),
+			debuggerLibraryDirectory: _debuggerLibraryDirectory, afterRegistration: afterRegistration);
 		_logger?.Invoke($"Runtime startup registration done for process {processId} (status: {attach.Status})");
 		_ = Task.Run(async () =>
 		{

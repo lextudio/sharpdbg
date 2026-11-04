@@ -32,6 +32,7 @@ public class DebugAdapter : DebugAdapterBase
 	private LaunchInfo? _lastLaunchInfo;
 	private bool _lastJustMyCode = true;
 	private int? _lastAttachProcessId;
+	private string? _lastAttachDebuggerLibraryDirectory;
 	private RemoteAttachInfo? _lastRemoteAttachInfo;
 
 	/// <summary>
@@ -434,6 +435,7 @@ public class DebugAdapter : DebugAdapterBase
 			_lastLaunchInfo = launchInfo;
 			_lastJustMyCode = justMyCode;
 			_lastAttachProcessId = null;
+			_lastAttachDebuggerLibraryDirectory = null;
 			_lastRemoteAttachInfo = null;
 			await ExecuteWithDebuggerProcessingLockAsync(async () => _debugger.Launch(launchInfo, justMyCode));
 			responder.SetResponse(new LaunchResponse());
@@ -477,6 +479,15 @@ public class DebugAdapter : DebugAdapterBase
 					AssembliesPath = coreClrMobileDebuggerOptions.AssembliesPath
 				};
 			}
+			// A directory holding mscordbi and the DAC for the target runtime, for a target whose own copies this process cannot load (iOS simulator)
+			var debuggerLibraryDirectory = GetConfigValue<string>(arguments.ConfigurationProperties, "debuggerLibraryDirectory");
+			// The provider serves Unix libraries only (TryProvideWindowsLibrary is not implemented)
+			if (debuggerLibraryDirectory is not null && OperatingSystem.IsWindows()) throw new ProtocolException("debuggerLibraryDirectory is not supported on Windows");
+			if (debuggerLibraryDirectory is not null && Directory.Exists(debuggerLibraryDirectory) is false) throw new ProtocolException($"debuggerLibraryDirectory does not exist: {debuggerLibraryDirectory}");
+			// The process was started stopped (SIGSTOP) before its runtime loaded; continue it once attach is registered
+			var continueStoppedProcess = GetConfigValue<bool?>(arguments.ConfigurationProperties, "continueStoppedProcess") ?? false;
+			// SIGCONT's number differs by OS (19 on macOS is SIGSTOP on Linux); only the iOS simulator case needs it
+			if (continueStoppedProcess && OperatingSystem.IsMacOS() is false) throw new ProtocolException("continueStoppedProcess is supported on macOS only");
 			var justMyCode = GetConfigValue<bool?>(arguments.ConfigurationProperties, "justMyCode") ?? true;
 			// enableStepFiltering is the Just My Code step filter under another name.
 			var enableStepFiltering = GetConfigValue<bool?>(arguments.ConfigurationProperties, "enableStepFiltering");
@@ -489,10 +500,11 @@ public class DebugAdapter : DebugAdapterBase
 			_lastLaunchInfo = null;
 			_lastJustMyCode = justMyCode;
 			_lastAttachProcessId = remoteAttachInfo is null ? processId.Value : null;
+			_lastAttachDebuggerLibraryDirectory = remoteAttachInfo is null ? debuggerLibraryDirectory : null;
 			_lastRemoteAttachInfo = remoteAttachInfo;
 			await ExecuteWithDebuggerProcessingLockAsync(async () =>
 			{
-				if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode);
+				if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode, debuggerLibraryDirectory, continueStoppedProcess);
 				else _debugger.AttachRemote(remoteAttachInfo, justMyCode);
 			});
 			responder.SetResponse(new AttachResponse());
@@ -707,7 +719,8 @@ public class DebugAdapter : DebugAdapterBase
 				if (_lastLaunchInfo is not null)
 					_debugger.Launch(_lastLaunchInfo, _lastJustMyCode);
 				else if (_lastAttachProcessId is int processId)
-					_debugger.Attach(processId, _lastJustMyCode);
+					// The process is running by now, so it is not continued again; the library directory still applies
+					_debugger.Attach(processId, _lastJustMyCode, _lastAttachDebuggerLibraryDirectory);
 				else if (_lastRemoteAttachInfo is not null)
 					_debugger.AttachRemote(_lastRemoteAttachInfo, _lastJustMyCode);
 				else
