@@ -27,6 +27,21 @@ public partial class ManagedDebugger
 	// Store launch info for deferred attach in ConfigurationDone
 	private LaunchInfo? _pendingLaunchInfo;
 	private RemoteAttachInfo? _pendingRemoteAttachInfo;
+	private Func<ICorDebug>? _pendingInProcessFactory;
+	private Action? _pendingInProcessReady;
+
+	/// <summary>Configures an adapter hosted in the target process to attach after DAP configuration.</summary>
+	public void AttachInProcess(int processId, bool justMyCode, Func<ICorDebug> factory, Action? ready)
+	{
+		EnsureNoProcessBeingDebugged();
+		ArgumentNullException.ThrowIfNull(factory);
+		_justMyCode = justMyCode;
+		_stopAtEntry = false;
+		_pendingAttachProcessId = processId;
+		_attachedProcessId = processId;
+		_pendingInProcessFactory = factory;
+		_pendingInProcessReady = ready;
+	}
 
 	/// <summary>
 	/// Stores the launch request info for use in handling ConfigurationDone
@@ -234,6 +249,21 @@ public partial class ManagedDebugger
 			_pendingRemoteAttachInfo = null;
 		}
 		// Otherwise check for pending attach
+		else if (_pendingAttachProcessId.HasValue && _pendingInProcessFactory is not null)
+		{
+			try
+			{
+				_corDebug = _pendingInProcessFactory();
+				AttachAtRuntimeStartup(_corDebug, _pendingAttachProcessId.Value);
+			}
+			finally
+			{
+				_pendingInProcessFactory = null;
+				_pendingAttachProcessId = null;
+				_pendingInProcessReady?.Invoke();
+				_pendingInProcessReady = null;
+			}
+		}
 		else if (_pendingAttachProcessId.HasValue)
 		{
 			PerformAttach(_pendingAttachProcessId.Value);

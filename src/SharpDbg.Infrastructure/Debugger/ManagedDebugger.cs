@@ -20,6 +20,7 @@ public partial class ManagedDebugger
 	private readonly VariableManager _variableManager;
 	private readonly FrameReferenceManager _frameReferenceManager;
 	private readonly Action<string>? _logger;
+	private readonly string? _moduleDirectory;
 	private sealed class ThreadInfo(ICorDebugThread thread)
 	{
 		public ICorDebugThread Thread { get; } = thread;
@@ -94,9 +95,10 @@ public partial class ManagedDebugger
 	private readonly Channel<CorDebugManagedCallbackEventArgs> _runtimeEventChannel;
 	public readonly AsyncLock DapRequestAndRuntimeEventLock = new();
 
-	public ManagedDebugger(Action<string>? logger = null)
+	public ManagedDebugger(Action<string>? logger = null, string? moduleDirectory = null)
 	{
 		_logger = logger;
+		_moduleDirectory = moduleDirectory;
 		_breakpointManager = new BreakpointManager();
 		_variableManager = new VariableManager();
 		_frameReferenceManager = new FrameReferenceManager();
@@ -521,6 +523,21 @@ public partial class ManagedDebugger
 	}
 
 	internal IReadOnlyCollection<ModuleInfo> AllModules => _modules.Values;
+
+	internal string GetIntrinsicReferenceAssemblyPath()
+	{
+		var hostCoreLibrary = typeof(object).Assembly.Location;
+		if (!string.IsNullOrEmpty(hostCoreLibrary)) return hostCoreLibrary;
+		if (_moduleDirectory is not null)
+		{
+			var candidate = Path.Combine(_moduleDirectory, "System.Private.CoreLib.dll");
+			var loadedCoreLibrary = AllModules.FirstOrDefault(module => Path.GetFileName(module.ModulePath) is "System.Private.CoreLib" or "System.Private.CoreLib.dll");
+			using var reader = ModuleMetadataReader.TryLoad(candidate);
+			if (reader is not null && loadedCoreLibrary is not null && reader.Mvid == loadedCoreLibrary.MetadataReader.Mvid)
+				return candidate;
+		}
+		throw new InvalidOperationException("A matching System.Private.CoreLib.dll is required for expression evaluation.");
+	}
 	internal ModuleInfo GetModuleInfoForModule(ICorDebugModule module) => _modules[module.BaseAddress];
 
 	internal ICorDebugValue? GetCurrentException(ThreadId threadId)

@@ -58,14 +58,23 @@ public partial class ManagedDebugger
 		ModuleMetadataReader? metadataReader = null;
 		try
 		{
-			if (corModule.IsInMemory)
+			if (_moduleDirectory is not null)
+			{
+				metadataReader = ModuleMetadataReader.TryLoadMatchingModuleFile(_moduleDirectory, modulePath, () => {
+					var metadata = corModule.GetMetaDataInterface<IMetaDataImport>();
+					var status = metadata.TryGetScopeProps(new char[1], 1, out _, out var mvid);
+					return (int)status >= 0 ? mvid : null;
+				});
+			}
+			// The selected file has the target module's MVID; TryLoad also validates its portable PDB.
+			if (metadataReader is null && corModule.IsInMemory)
 			{
 				var size = corModule.Size;
 				var baseAddress2 = corModule.BaseAddress;
 				var (bytes, _) = _process.ReadMemory(baseAddress2, size);
 				metadataReader = ModuleMetadataReader.TryLoadFromBytes(bytes);
 			}
-			else
+			else if (metadataReader is null)
 			{
 				metadataReader = ModuleMetadataReader.TryLoad(modulePath);
 			}
@@ -104,7 +113,7 @@ public partial class ManagedDebugger
 		ModuleSet_Version++;
 		TryBindEntryBreakpoint(moduleInfo);
 
-		if (moduleName is "System.Private.CoreLib.dll")
+		if (moduleName is "System.Private.CoreLib.dll" or "System.Private.CoreLib")
 		{
 			// we need to map value classes to primitive types to allow evaluation to invoke methods on them
 			MapRuntimePrimitiveTypesToCorDebugClass(corModule);
