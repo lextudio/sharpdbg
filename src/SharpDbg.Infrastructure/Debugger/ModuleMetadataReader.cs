@@ -90,6 +90,27 @@ public partial class ModuleMetadataReader : IDisposable
 		catch { return null; }
 	}
 
+	/// <summary>Loads an assembly only if it is the same module version as the debuggee.</summary>
+	public static ModuleMetadataReader? TryLoadMatching(string assemblyPath, Guid expectedMvid)
+	{
+		var reader = TryLoad(assemblyPath);
+		if (reader is null || reader.Mvid == expectedMvid) return reader;
+		reader.Dispose();
+		return null;
+	}
+
+	/// <summary>Maps a runtime-reported module name to a file and validates the target's module identity.</summary>
+	public static ModuleMetadataReader? TryLoadMatchingModuleFile(string directory, string reportedName, Func<Guid?> getTargetMvid)
+	{
+		ArgumentNullException.ThrowIfNull(getTargetMvid);
+		string name = Path.GetFileName(reportedName);
+		if (string.IsNullOrEmpty(name)) return null;
+		string candidate = Path.Combine(directory, name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? name : name + ".dll");
+		if (!File.Exists(candidate)) return null;
+		var targetMvid = getTargetMvid();
+		return targetMvid.HasValue ? TryLoadMatching(candidate, targetMvid.Value) : null;
+	}
+
 	public bool TryLoadSymbols(string pdbPath)
 	{
 		if (!File.Exists(pdbPath)) return false;
