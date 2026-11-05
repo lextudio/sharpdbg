@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <!-- Same pin as the agent. OpenDevelop's NuGet.config maps them to the local feed that sync-openavalon-feed.ps1 fills. -->
+    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.41991522905.1</LextudioDapForkVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.0" />
+    <PackageReference Include="OmniSharp.Extensions.DebugAdapter.Server" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="OmniSharp.Extensions.DebugAdapter.Shared" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="OmniSharp.Extensions.DebugAdapter" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="OmniSharp.Extensions.JsonRpc" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageReference Include="System.Reactive" Version="7.0.0" />
+    <PackageReference Include="Nerdbank.Streams" Version="2.14.411" />
+    <ProjectReference Include="../../src/SharpDbg.Infrastructure/SharpDbg.Infrastructure.csproj" />
+    <Compile Include="../../src/SharpDbg.AndroidAgent/AndroidDapServer.cs" Link="AndroidDapServer.cs" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>
