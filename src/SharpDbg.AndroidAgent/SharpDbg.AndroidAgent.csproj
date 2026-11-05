@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <SelfContained>true</SelfContained>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnablePreviewFeatures>true</EnablePreviewFeatures>
+    <!-- Normally passed by build/android-debug-agent.ps1 from OpenDevelop's Directory.Packages.props. -->
+    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.41991522905.1</LextudioDapForkVersion>
+    <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Silhouette" Version="4.2.0" />
+    <PackageReference Include="ICorDebugSharp" Version="0.1.8" />
+    <!-- The Android app SDK does not pass transitive dependencies of project references to NativeAOT. -->
+    <PackageReference Include="Ardalis.GuardClauses" Version="5.0.0" />
+    <PackageReference Include="ICSharpCode.Decompiler" Version="11.0.0.9375" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <PackageReference Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.9.0" />
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
+    <PackageReference Include="NeoSmart.AsyncLock" Version="3.2.1" />
+    <PackageReference Include="ZLinq" Version="1.5.6" />
+    <PackageReference Include="OmniSharp.Extensions.DebugAdapter.Server" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="OmniSharp.Extensions.DebugAdapter.Shared" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="OmniSharp.Extensions.DebugAdapter" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="OmniSharp.Extensions.JsonRpc" Version="[$(LextudioDapForkVersion)]" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageReference Include="System.Reactive" Version="7.0.0" />
+    <PackageReference Include="Nerdbank.Streams" Version="2.14.411" />
+    <ProjectReference Include="../SharpDbg.Infrastructure/SharpDbg.Infrastructure.csproj" />
+    <TrimmerRootAssembly Include="SharpDbg.Infrastructure" />
+    <TrimmerRootAssembly Include="Microsoft.CSharp" />
+  </ItemGroup>
+</Project>
