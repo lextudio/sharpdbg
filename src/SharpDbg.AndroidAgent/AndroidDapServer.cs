@@ -3,6 +3,8 @@ using System.Text.Json;
 using OmniSharp.Extensions.DebugAdapter.Server;
 using OmniSharp.Extensions.DebugAdapter.Protocol;
 using OmniSharp.Extensions.DebugAdapter.Protocol.Models;
+using OmniSharp.Extensions.JsonRpc;
+using OmniSharp.Extensions.JsonRpc.Server;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -62,12 +64,12 @@ internal sealed class AndroidDapServer
                 foreach (string command in new[] { "attach", "configurationDone", "setBreakpoints", "setFunctionBreakpoints", "setExceptionBreakpoints", "threads", "stackTrace", "resolveStackFrame", "scopes", "variables", "evaluate", "continue", "next", "stepIn", "stepOut", "pause", "modules", "loadedSources", "disconnect" })
                 {
                     options.OnJsonRequest(command, async (JsonElement raw, CancellationToken cancellationToken) => {
-                        if (command != "attach" && !attached) throw new InvalidOperationException("Attach with a valid session token first.");
+                        if (command != "attach" && !attached) throw ToDapError(new InvalidOperationException("Attach with a valid session token first."));
                         var arguments = JsonNode.Parse(raw.GetRawText()) as JsonObject ?? new JsonObject();
                         Profiler.Log(4, "SharpDbg", "DAP request: " + command);
                         JsonObject body;
                         try { body = await HandleAsync(command, arguments); }
-                        catch (Exception ex) { Profiler.Log(6, "SharpDbg", "DAP request failed: " + command + " " + ex); throw; }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { Profiler.Log(6, "SharpDbg", "DAP request failed: " + command + " " + ex); throw ToDapError(ex); }
                         Profiler.Log(4, "SharpDbg", "DAP request completed: " + command);
                         using var document = JsonDocument.Parse(body.ToJsonString());
                         return document.RootElement.Clone();
@@ -91,6 +93,10 @@ internal sealed class AndroidDapServer
             server?.Dispose();
         }
     }
+
+    // The library wraps any other exception as "Internal Error - <exception.ToString()>", which would send the exception
+    // type and call stack over adb to the IDE. RpcErrorException carries just our message.
+    static RpcErrorException ToDapError(Exception ex) => new(ErrorCodes.InternalError, ex.GetType().Name, ex.Message);
 
     async Task<JsonObject> HandleAsync(string command, JsonObject args)
     {

@@ -25,14 +25,20 @@ public sealed class AndroidDapServerTests
         Assert.True((bool?)response["success"]);
         response = await Request(stream, 2, "threads", new JsonObject());
         Assert.False((bool?)response["success"]);
+        Assert.Equal("Attach with a valid session token first.", (string?)response["message"]);
         response = await Request(stream, 3, "attach", new JsonObject { ["sessionToken"] = "错误" });
         Assert.False((bool?)response["success"]);
+        Assert.Equal("Invalid debug session token.", (string?)response["message"]);
         Assert.Equal(0, factoryCalls);
         response = await Request(stream, 4, "attach", new JsonObject { ["sessionToken"] = "secret" });
         Assert.True((bool?)response["success"]);
         response = await Request(stream, 5, "configurationDone", null);
         Assert.False((bool?)response["success"]);
         Assert.Contains("factory failed", (string?)response["message"]);
+        // The client sees our message, not the library's "Internal Error - <exception.ToString()>" with a call stack.
+        Assert.Equal("factory failed", (string?)response["message"]);
+        Assert.DoesNotContain("Internal Error", response.ToJsonString());
+        Assert.DoesNotContain("   at ", response.ToJsonString());
         Assert.Equal(1, factoryCalls);
         Assert.Equal(1, readyCalls);
         client.Close();
