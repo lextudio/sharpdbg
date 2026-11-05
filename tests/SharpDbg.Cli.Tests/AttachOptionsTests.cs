@@ -89,6 +89,42 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 	}
 
 	[Fact]
+	public async Task Attach_ThatFailsAfterTheRequest_IsReportedAndTerminatesTheSession()
+	{
+		Assert.SkipWhen(OperatingSystem.IsWindows(), "debuggerLibraryDirectory serves Unix libraries only");
+		// An existing directory without mscordbi: the request is accepted, the runtime-startup registration then fails
+		var empty = Directory.CreateTempSubdirectory("sharpdbg-no-dbi-");
+		try
+		{
+			var (debugProtocolHost, initializedEventTcs, _, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
+			using var _ = adapter;
+			using var __ = new ProcessKiller(p2);
+			using var ___ = debugProtocolHost;
+			var failureOutput = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+			var terminated = new TaskCompletionSource<TerminatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+			debugProtocolHost.RegisterEventType<OutputEvent>(e => { if ((e.Output ?? string.Empty).Contains("failed", StringComparison.Ordinal)) failureOutput.TrySetResult(e); });
+			debugProtocolHost.RegisterEventType<TerminatedEvent>(e => terminated.TrySetResult(e));
+
+			debugProtocolHost.WithInitializeRequest();
+			debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["debuggerLibraryDirectory"] = empty.FullName }));
+			await debugProtocolHost.WaitForInitializedEvent(initializedEventTcs);
+			// The failure comes when the runtime starts and dbgshim asks the provider for mscordbi
+			debugProtocolHost
+				.WithConfigurationDoneRequest()
+				.WithOptionalResumeRuntime(p2.Id, startSuspended: true);
+
+			var output = await failureOutput.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+			output.Output.Should().Contain($"Attach to process {p2.Id} failed");
+			output.Category.Should().Be(OutputEvent.CategoryValue.Stderr);
+			await terminated.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+		}
+		finally
+		{
+			empty.Delete(true);
+		}
+	}
+
+	[Fact]
 	public void Attach_WithMissingDebuggerLibraryDirectory_FailsTheRequest()
 	{
 		Assert.SkipWhen(OperatingSystem.IsWindows(), "the option is rejected on Windows before the directory is checked");
