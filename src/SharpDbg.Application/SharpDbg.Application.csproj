@@ -4,20 +4,20 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Normally passed by OpenDevelop's Directory.Packages.props from the local feed. -->
+    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.42043402458.1</LextudioDapForkVersion>
   </PropertyGroup>
-	
-	<ItemGroup>
-		<Publicize IncludeCompilerGeneratedMembers="false" Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" />
-		<DoNotPublicize Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol:Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.DebugAdapterBase" />
-	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Krafs.Publicizer" Version="2.3.0">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-    <PackageReference Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" Version="18.0.10427.1" />
-  </ItemGroup>
+	<ItemGroup>
+		<!-- The DAP transport is the MIT-licensed OmniSharp fork, the same one SharpDbg.AndroidAgent
+		     uses. Microsoft.VisualStudio.Shared.VSCodeDebugProtocol is deliberately not referenced:
+		     its package license is not open source and cannot be redistributed with OpenDevelop. -->
+		<PackageReference Include="OmniSharp.Extensions.DebugAdapter.Server" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="OmniSharp.Extensions.DebugAdapter.Shared" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="OmniSharp.Extensions.DebugAdapter" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="OmniSharp.Extensions.JsonRpc" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
+	</ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SharpDbg.Infrastructure\SharpDbg.Infrastructure.csproj" />

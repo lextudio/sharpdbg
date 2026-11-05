@@ -1,3 +1,7 @@
+// Client-side definitions for the SharpDbg-specific DAP requests, used by the tests.
+// They live here rather than in SharpDbg.Application because that project no longer references
+// Microsoft.VisualStudio.Shared.VSCodeDebugProtocol (its license is not open source and it cannot
+// be redistributed); the tests still use that package only as their DAP client.
 using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;

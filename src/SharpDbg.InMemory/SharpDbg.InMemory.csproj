@@ -15,6 +15,8 @@
 	<PackageProjectUrl>https://github.com/MattParkerDev/sharpdbg</PackageProjectUrl>
 	<Description>A managed .NET Debugger implementing the Debug Adapter Protocol</Description>
 	<PackageTags>Csharp Dotnet Debugger Debugging ICorDebug</PackageTags>
+	<!-- Normally passed by OpenDevelop's Directory.Packages.props from the local feed. -->
+	<LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.42043402458.1</LextudioDapForkVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -36,7 +38,12 @@
 		<PackageReference Include="ICSharpCode.Decompiler" Version="11.0.0.9375" />
 		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
 		<PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
-		<PackageReference Include="Microsoft.VisualStudio.Shared.VSCodeDebugProtocol" Version="18.0.10427.1" />
+		<!-- The DAP transport is the MIT-licensed OmniSharp fork (see SharpDbg.Application). -->
+		<PackageReference Include="OmniSharp.Extensions.DebugAdapter.Server" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="OmniSharp.Extensions.DebugAdapter.Shared" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="OmniSharp.Extensions.DebugAdapter" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="OmniSharp.Extensions.JsonRpc" Version="[$(LextudioDapForkVersion)]" />
+		<PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
 		<PackageReference Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.9.0" />
 		<PackageReference Include="NeoSmart.AsyncLock" Version="3.2.1" />
 		<PackageReference Include="ZLinq" Version="1.5.6" />

@@ -23,11 +23,9 @@ internal static class InMemoryDebugAdapterHelper
 		var stdOutClient = new AnonymousPipeClientStream(PipeDirection.In, stdOutServer.ClientSafePipeHandle); // std out read
 
 		var adapter = new DebugAdapter(logAction ?? Log);
-		adapter.Initialize(stdInClient, stdOutServer);
-		adapter.Protocol.VerifySynchronousOperationAllowed();
-		adapter.Protocol.Run();
+		var run = Task.Run(() => adapter.RunAsync(stdInClient, stdOutServer));
 
-		var disposable = new InMemoryDebugAdapterDisposable(stdInServer, stdOutServer, stdInClient, stdOutClient, adapter);
+		var disposable = new InMemoryDebugAdapterDisposable(stdInServer, stdOutServer, stdInClient, stdOutClient, adapter, run);
 		return (stdInServer, stdOutClient, disposable);
 
 		void Log(string message)
@@ -42,7 +40,8 @@ public class InMemoryDebugAdapterDisposable(
 	AnonymousPipeServerStream stdOutServer,
 	AnonymousPipeClientStream stdInClient,
 	AnonymousPipeClientStream stdOutClient,
-	DebugAdapter debugAdapter)
+	DebugAdapter debugAdapter,
+	Task run)
 	: IDisposable
 {
 	private readonly AnonymousPipeServerStream _stdInServer = stdInServer;
@@ -51,15 +50,17 @@ public class InMemoryDebugAdapterDisposable(
 	private readonly AnonymousPipeClientStream _stdOutClient = stdOutClient;
 
 	private readonly DebugAdapter _debugAdapter = debugAdapter;
+	private readonly Task _run = run;
 
 	public void Dispose()
 	{
 		GC.SuppressFinalize(this);
-		_debugAdapter.Protocol.Stop();
-		_debugAdapter.Protocol.WaitForReader();
+		// Closing the client-side streams unblocks the server's reader, which ends RunAsync.
 		_stdInServer.Dispose();
 		_stdOutServer.Dispose();
 		_stdInClient.Dispose();
 		_stdOutClient.Dispose();
+		try { _run.Wait(TimeSpan.FromSeconds(5)); } catch { /* the run ends with the streams */ }
+		_debugAdapter.Dispose();
 	}
 }

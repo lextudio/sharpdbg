@@ -65,43 +65,17 @@ internal static class Program
 			// Create the debug adapter
 			var adapter = new DebugAdapter(Log);
 
-			// Initialize the protocol client and start it
-			adapter.Initialize(inputStream, outputStream);
-
 			Log("Protocol server starting...");
 
-			Exception? dispatcherError = null;
-			adapter.Protocol.DispatcherError += (_, e) =>
-			{
-				Interlocked.CompareExchange(ref dispatcherError, e.Exception, null);
-
-				var message = $"SharpDbg DAP protocol dispatcher error: {e.Exception}";
-				Log(message);
-				Console.Error.WriteLine(message);
-			};
-
-			// Run() starts the protocol client's message loop in a background thread
-			adapter.Protocol.Run();
-
-			// Shutdown happens either when a DAP 'disconnect' request has been handled
-			// (while stdin is still open), or when the client closes stdin / crashes (reader loop exits).
-			var shutdownTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-			adapter.ShutdownRequested += () => shutdownTcs.TrySetResult();
-			_ = Task.Run(() =>
-			{
-				// WaitForReader() blocks until the input stream is closed and must not be called from the dispatcher thread
-				adapter.Protocol.WaitForReader();
-				Log("Input stream closed");
-				shutdownTcs.TrySetResult();
-			});
-
-			shutdownTcs.Task.Wait();
+			// RunAsync handles messages until a 'disconnect' request (while stdin is still open) or
+			// the client closes stdin / crashes.
+			adapter.RunAsync(inputStream, outputStream).GetAwaiter().GetResult();
 
 			// If the client closed its stream without sending a 'disconnect' request the debugger was never
 			// disposed - clean it up now. No-op when a disconnect request was handled.
 			adapter.DapAborted_ShutdownDebugger();
 
-			var exitCode = dispatcherError is not null ? 1 : 0;
+			var exitCode = 0;
 			Log($"Exiting with code {exitCode}");
 			_logWriter?.Flush();
 			_logWriter?.Dispose();
