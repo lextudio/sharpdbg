@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <!-- Same pin as the agent. OpenDevelop's NuGet.config maps them to the local feed that sync-openavalon-feed.ps1 fills. -->
-    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.41991522905.1</LextudioDapForkVersion>
+    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.42043402458.1</LextudioDapForkVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.0" />

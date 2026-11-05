@@ -10,7 +10,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <EnablePreviewFeatures>true</EnablePreviewFeatures>
     <!-- Normally passed by build/android-debug-agent.ps1 from OpenDevelop's Directory.Packages.props. -->
-    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.41991522905.1</LextudioDapForkVersion>
+    <LextudioDapForkVersion Condition="'$(LextudioDapForkVersion)' == ''">1.0.0-lextudio.42043402458.1</LextudioDapForkVersion>
     <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>
   </PropertyGroup>
   <ItemGroup>
