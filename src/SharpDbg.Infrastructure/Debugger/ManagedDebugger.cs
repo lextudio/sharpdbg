@@ -258,8 +258,10 @@ public partial class ManagedDebugger
 			}
 			catch (Exception ex)
 			{
-				// Nothing awaits this task, so an attach failure would otherwise leave the session silently unattached
+				// Nothing awaits this task: tell the client, or it shows a session that never attached as running
 				_logger?.Invoke($"Attach to process {processId} failed: {ex}");
+				OnOutput?.Invoke($"Attach to process {processId} failed: {ex.Message}\n", true);
+				OnTerminated?.Invoke();
 				return;
 			}
 
