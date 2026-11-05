@@ -170,10 +170,35 @@ public static partial class TestHelper
 		return debugProtocolHost;
 	}
 
+	/// The runtime opens its diagnostic socket a moment after the process starts (longer for an app that has not run for
+	/// a while), and a test reaches this point as soon as the adapter has answered its requests: retry until the socket exists.
+	private static void ResumeRuntimeWhenReady(int processId)
+	{
+		var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+		while (true)
+		{
+			try
+			{
+				new DiagnosticsClient(processId).ResumeRuntime();
+				return;
+			}
+			catch (ServerNotAvailableException) when (DateTime.UtcNow < deadline && IsAlive(processId))
+			{
+				System.Threading.Thread.Sleep(50);
+			}
+		}
+
+		static bool IsAlive(int processId)
+		{
+			try { return !Process.GetProcessById(processId).HasExited; }
+			catch (ArgumentException) { return false; }
+		}
+	}
+
 	public static DebugProtocolHost WithOptionalResumeRuntime(this DebugProtocolHost debugProtocolHost, int processId, bool startSuspended)
 	{
 		// DiagnosticsClient.ResumeRuntime seems to have a different implementation on MacOS - it will throw if the runtime is not paused...
-		if (startSuspended) new DiagnosticsClient(processId).ResumeRuntime();
+		if (startSuspended) ResumeRuntimeWhenReady(processId);
 		return debugProtocolHost;
 	}
 

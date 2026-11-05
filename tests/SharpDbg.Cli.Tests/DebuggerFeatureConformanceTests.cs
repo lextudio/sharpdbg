@@ -469,17 +469,30 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	{
 		var startSuspended = true;
 		var (host, initializedEventTcs, events, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHostInProc(testOutputHelper, startSuspended, appName);
-		await host
-			.WithInitializeRequest()
-			.WithAttachRequest(debuggee.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
-		host
-			.WithBreakpointsRequest(line, file)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(debuggee.Id, startSuspended);
-		var stopped = await host.WaitForStoppedEvent(events);
-		host.WithStackTraceRequest(stopped.ThreadId!.Value, out var stackTraceResponse);
-		return new Session(host, adapter, debuggee, events, stopped.ThreadId!.Value, stackTraceResponse.StackFrames!.First());
+		try
+		{
+			await host
+				.WithInitializeRequest()
+				.WithAttachRequest(debuggee.Id)
+				.WaitForInitializedEvent(initializedEventTcs);
+			host
+				.WithBreakpointsRequest(line, file)
+				.WithConfigurationDoneRequest()
+				.WithOptionalResumeRuntime(debuggee.Id, startSuspended);
+			var stopped = await host.WaitForStoppedEvent(events);
+			host.WithStackTraceRequest(stopped.ThreadId!.Value, out var stackTraceResponse);
+			return new Session(host, adapter, debuggee, events, stopped.ThreadId!.Value, stackTraceResponse.StackFrames!.First());
+		}
+		catch
+		{
+			// No Session owns these yet: without this a failed setup leaves a suspended debuggee behind, whose
+			// foreground thread then keeps the whole test host from exiting. Each step on its own, so that a dead
+			// adapter (a disconnect that throws) neither skips the rest nor replaces the failure being rethrown.
+			try { host.Dispose(); } catch { /* the setup failure is the one to report */ }
+			try { new ProcessKiller(debuggee).Dispose(); } catch { /* ProcessKiller already ignores a failed kill */ }
+			try { adapter.Dispose(); } catch { /* the setup failure is the one to report */ }
+			throw;
+		}
 	}
 
 	sealed class Session(DisposableDebugProtocolHost host, IDisposable adapter, Process debuggee, TcsContainer events, int threadId, StackFrame frame) : IDisposable
