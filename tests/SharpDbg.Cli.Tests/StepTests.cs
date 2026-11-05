@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 using SharpDbg.Cli.Tests.Helpers;
 
 namespace SharpDbg.Cli.Tests;
@@ -112,8 +113,16 @@ public class StepTests(ITestOutputHelper testOutputHelper)
 		var stoppedEvent2 = await debugProtocolHost.WithStepInRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
 		var stopInfo2 = stoppedEvent2.ReadStopInfo();
 		stopInfo2.filePath.Should().EndWith("Console.cs");
-		// Bumping ICSharpCode.Decompiler changed the decompiled output, so the line number changed. If this is failing, clear temp/SharpIdeSymbolCache and try again.
-		stopInfo2.line.Should().Be(1219);
+		// The decompiled Console.cs differs per runtime build (the same statement is on line 807 under 10.0.4 and 1219 under 10.0.14),
+		// so check what the stopped line says, not which number it is: it must be the first statement of Console.WriteLine(string),
+		// read back from the decompiled source the adapter serves through the frame's sourceReference.
+		debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2);
+		var decompiledFrameSource = stackTraceResponse2.StackFrames!.Single().Source;
+		decompiledFrameSource!.SourceReference.Should().BeGreaterThan(0, "decompiled source is served by reference, it has no file on disk");
+		var decompiledSource = debugProtocolHost.SendRequestSync(new SourceRequest { SourceReference = decompiledFrameSource.SourceReference!.Value });
+		var decompiledLines = decompiledSource.Content.Split('\n');
+		stopInfo2.line.Should().BeInRange(1, decompiledLines.Length);
+		decompiledLines[stopInfo2.line - 1].Trim().Should().Be("Out.WriteLine(value);");
 	}
 
 	[Fact]
