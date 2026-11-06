@@ -111,6 +111,13 @@ public sealed class DebugAdapter : IDisposable
 				.WithLoggerFactory(new AdapterLogFactory())
 				.WithUnhandledExceptionHandler(ex => _logger?.Invoke("DAP input: " + ex));
 			ConfigureCapabilities(options.Capabilities);
+			// DebugAdapterServer copies only a subset of Capabilities into the initialize response;
+			// exception filter options are supported here but are not copied by the fork.
+			options.OnInitialized((_, _, response, _) =>
+			{
+				response.SupportsExceptionFilterOptions = true;
+				return Task.CompletedTask;
+			});
 			RegisterHandlers(options);
 		});
 

@@ -30,6 +30,7 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	[Theory]
 	[InlineData("SupportsGotoTargetsRequest")]
 	[InlineData("SupportsSingleThreadExecutionRequests")]
+	[InlineData("SupportsExceptionFilterOptions")]
 	[InlineData("SupportsLoadedSourcesRequest")]
 	[InlineData("SupportsBreakpointLocationsRequest")]
 	[InlineData("SupportsRestartRequest")]
