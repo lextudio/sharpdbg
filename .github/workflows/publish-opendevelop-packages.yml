@@ -70,9 +70,77 @@ jobs:
           path: artifacts/packages/*.nupkg
           if-no-files-found: error
 
+  pack-android-agent:
+    name: Pack the Android debug agents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.x
+          dotnet-quality: preview
+      - name: Install the Android workload and NDK
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}" && test -d "$ANDROID_HOME"
+          # Run every dotnet command of this step under the 11.x SDK that setup-dotnet just installed,
+          # whatever else the image carries: this repository's global.json pins 10.0.x and is not found
+          # from here, and this pin (found from the working directory) makes that explicit, like the
+          # scratch global.json of iac/pack-opendevelop-android-agent.ps1.
+          sdk11=$(dotnet --list-sdks | awk '$1 ~ /^11\./ { print $1 }' | sort -V | tail -n 1)
+          test -n "$sdk11"
+          printf '{"sdk":{"version":"%s","allowPrerelease":true,"rollForward":"disable"}}\n' "$sdk11" > global.json
+          # Install the workload set's manifest, not the SDK's bundled copy: 11.0.100-rc.3 bundles Android
+          # manifest 37.0.0-preview.6.59, whose NativeAOT packs cover only arm64 and x64, so publishing the
+          # armeabi-v7a agent fails with NETSDK1181 (Microsoft.Android.Runtime.NativeAOT.37.android-arm is not
+          # present in workload manifests). The same SDK's workload set pins Microsoft.NET.Sdk.Android to
+          # 37.2.0-rc.2.84 from the 11.0.100-rc.2 band, which has all three NativeAOT packs; --skip-manifest-update
+          # would keep the incomplete bundled manifest.
+          dotnet workload install android
+          # Fail here, not eight minutes later in the publish loop, if a future SDK's manifest again omits an ABI.
+          dotnetRoot=$(dirname "$(readlink -f "$(command -v dotnet)")")
+          compgen -G "$dotnetRoot/packs/Microsoft.Android.Runtime.NativeAOT.*.android-arm" >/dev/null || {
+            echo "The installed Android workload manifest has no NativeAOT pack for 32-bit ARM (armeabi-v7a)." >&2
+            exit 1
+          }
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" 'ndk;27.2.12479018'
+      - name: Pack LeXtudio.SharpDbg.AndroidAgent
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'dap-nuget.config'
+          @'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget" value="https://api.nuget.org/v3/index.json" />
+              <add key="lextudio_github" value="https://nuget.pkg.github.com/lextudio/index.json" />
+            </packageSources>
+            <packageSourceMapping>
+              <packageSource key="lextudio_github"><package pattern="OmniSharp.Extensions.*" /></packageSource>
+              <packageSource key="nuget"><package pattern="*" /></packageSource>
+            </packageSourceMapping>
+          </configuration>
+          '@ | Set-Content -LiteralPath $config -Encoding utf8
+          ./iac/pack-opendevelop-android-agent.ps1 -Version "1.0.0-lextudio.${{ github.run_id }}.1" -NuGetConfigPath $config `
+            -AndroidSdkDirectory $env:ANDROID_HOME -AndroidNdkDirectory (Join-Path $env:ANDROID_HOME 'ndk/27.2.12479018')
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opendevelop-android-agent
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error
+
   publish:
     name: Publish to GitHub Packages
-    needs: pack-cli
+    needs: [pack-cli, pack-android-agent]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -80,13 +148,17 @@ jobs:
         with:
           name: opendevelop-packages
           path: packages
+      - uses: actions/download-artifact@v8
+        with:
+          name: opendevelop-android-agent
+          path: packages
       - name: Push the packages
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $packages = @(Get-ChildItem -LiteralPath packages -Filter *.nupkg)
-          if ($packages.Count -eq 0) { throw 'The pack job produced no packages.' }
+          if ($packages.Count -eq 0) { throw 'The pack jobs produced no packages.' }
           foreach ($package in $packages) {
             Write-Host "Pushing $($package.Name)"
             & dotnet nuget push $package.FullName --source https://nuget.pkg.github.com/lextudio/index.json --api-key $env:GITHUB_TOKEN --skip-duplicate

@@ -47,6 +47,12 @@ try {
         throw "The publish output has no SharpDbg.Cli.dll: $cliOutput"
     }
 
+    # OpenDevelop's SPDX collector discovers a project's packages through its project.assets.json, and
+    # the adapter is no longer one of its own projects. Ship the restore graph inside the package so a
+    # consumer can still report the adapter's dependencies.
+    $assets = Get-ChildItem -LiteralPath (Join-Path $root 'artifacts/obj/SharpDbg.Cli') -Recurse -File -Filter 'project.assets.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $assets) { throw 'The SharpDbg.Cli restore did not produce a project.assets.json.' }
+
     # A project that only packs: nothing is compiled, the staged publish output is the payload.
     $packProject = Join-Path $stage 'pack.csproj'
     @"
@@ -68,6 +74,7 @@ try {
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(Join-Path $cliOutput '**')" Pack="true" PackagePath="lib/net10.0" />
+    <None Include="$($assets.FullName)" Pack="true" PackagePath="spdx" />
     <None Include="$(Join-Path $root 'LICENSE.txt')" Pack="true" PackagePath="" />
     <None Include="$(Join-Path $root 'README.md')" Pack="true" PackagePath="" />
   </ItemGroup>
