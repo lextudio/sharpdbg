@@ -1,0 +1,94 @@
+name: Publish OpenDevelop packages
+
+# OpenDevelop consumes two artifacts from this repository: the DAP adapter (SharpDbg.Cli and its
+# whole dependency closure) and the Android debug agents. Building them there costs every CI run a
+# nested build of the adapter plus a ~10-minute android-agent job that gates all of its platform
+# builds, for content that only changes when this repository does.
+#
+# So build them once here and publish them as LeXtudio.* packages to GitHub Packages; OpenDevelop
+# restores a pinned version from Directory.Packages.props. After a run, move that pin to the version
+# this workflow printed.
+
+on:
+  # workflow_dispatch only reaches a workflow that is on the default branch, and this fork's work
+  # lives on opendevelop-debugger-features until it is merged - so the feature branch also triggers
+  # on push. A published version is only consumed when OpenDevelop's pin moves, so an extra publish
+  # is harmless.
+  workflow_dispatch:
+  push:
+    branches: [main, opendevelop-debugger-features]
+    paths:
+      - 'src/**'
+      - 'iac/**'
+      - '.github/workflows/publish-opendevelop-packages.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-opendevelop-packages
+  cancel-in-progress: false
+
+jobs:
+  pack-cli:
+    name: Pack the DAP adapter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Pack LeXtudio.SharpDbg.Cli
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
+        run: |
+          # The OmniSharp DAP fork lives on GitHub Packages, and this repository's nuget.config only
+          # knows nuget.org. Restore through a scratch configuration that adds the feed and keeps the
+          # package-source mapping that pins OmniSharp.Extensions.* to it.
+          $config = Join-Path $env:RUNNER_TEMP 'dap-nuget.config'
+          @'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget" value="https://api.nuget.org/v3/index.json" />
+              <add key="lextudio_github" value="https://nuget.pkg.github.com/lextudio/index.json" />
+            </packageSources>
+            <packageSourceMapping>
+              <packageSource key="lextudio_github"><package pattern="OmniSharp.Extensions.*" /></packageSource>
+              <packageSource key="nuget"><package pattern="*" /></packageSource>
+            </packageSourceMapping>
+          </configuration>
+          '@ | Set-Content -LiteralPath $config -Encoding utf8
+          ./iac/pack-opendevelop-cli.ps1 -Version "1.0.0-lextudio.${{ github.run_number }}.1" -NuGetConfigPath $config
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opendevelop-packages
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish to GitHub Packages
+    needs: pack-cli
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: opendevelop-packages
+          path: packages
+      - name: Push the packages
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $packages = @(Get-ChildItem -LiteralPath packages -Filter *.nupkg)
+          if ($packages.Count -eq 0) { throw 'The pack job produced no packages.' }
+          foreach ($package in $packages) {
+            Write-Host "Pushing $($package.Name)"
+            & dotnet nuget push $package.FullName --source https://nuget.pkg.github.com/lextudio/index.json --api-key $env:GITHUB_TOKEN --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "Pushing $($package.Name) failed." }
+          }
