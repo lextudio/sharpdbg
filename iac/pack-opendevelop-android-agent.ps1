@@ -44,9 +44,11 @@ $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 # 11.x installation the Android workload was installed into, and pin the scratch build to it.
 $versions = & $DotNet --list-sdks
 if ($LASTEXITCODE -ne 0) { throw 'Could not list .NET SDKs.' }
-$version = @($versions | ForEach-Object { if ($_ -match '^(11\.[^ ]+)\s') { $Matches[1] } } | Sort-Object { [System.Management.Automation.SemanticVersion]::Parse($_) } -Descending) | Select-Object -First 1
-if (-not $version) { throw 'Building the Android debugger requires a .NET 11 SDK with the Android workload.' }
-$sdkLine = @($versions | Where-Object { $_.StartsWith("$version ") }) | Select-Object -First 1
+# The parameter is $Version, and PowerShell variable names are case-insensitive: this must not be
+# $version, or selecting the SDK would overwrite the package version.
+$sdkVersion = @($versions | ForEach-Object { if ($_ -match '^(11\.[^ ]+)\s') { $Matches[1] } } | Sort-Object { [System.Management.Automation.SemanticVersion]::Parse($_) } -Descending) | Select-Object -First 1
+if (-not $sdkVersion) { throw 'Building the Android debugger requires a .NET 11 SDK with the Android workload.' }
+$sdkLine = @($versions | Where-Object { $_.StartsWith("$sdkVersion ") }) | Select-Object -First 1
 if ($sdkLine -notmatch '\[(.+)\]') { throw 'Could not determine the .NET SDK root.' }
 $dotnetRoot = Split-Path -Parent $Matches[1]
 
@@ -113,7 +115,7 @@ try {
 </configuration>
 "@ | Set-Content -LiteralPath (Join-Path $scratch 'nuget.config') -Encoding utf8
     }
-    @{ sdk = @{ version = $version; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
+    @{ sdk = @{ version = $sdkVersion; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
 
     Set-Location $scratch
     $projectFile = Join-Path $scratch 'src/SharpDbg.AndroidAgent/SharpDbg.AndroidAgent.csproj'
@@ -224,6 +226,9 @@ try {
     <TargetFramework>net10.0</TargetFramework>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!-- The pack project sits beside the scratch copy of src/, so the default glob would compile
+         SharpDbg's sources into this project (without their package references). It packs only. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
     <NoWarn>`$(NoWarn);NU5128</NoWarn>
     <PackageId>LeXtudio.SharpDbg.AndroidAgent</PackageId>
     <Version>$Version</Version>
