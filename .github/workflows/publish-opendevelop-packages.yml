@@ -63,7 +63,7 @@ jobs:
             </packageSourceMapping>
           </configuration>
           '@ | Set-Content -LiteralPath $config -Encoding utf8
-          ./iac/pack-opendevelop-cli.ps1 -Version "1.0.0-lextudio.${{ github.run_number }}.1" -NuGetConfigPath $config
+          ./iac/pack-opendevelop-cli.ps1 -Version "1.0.0-lextudio.${{ github.run_id }}.1" -NuGetConfigPath $config
       - uses: actions/upload-artifact@v7
         with:
           name: opendevelop-packages
