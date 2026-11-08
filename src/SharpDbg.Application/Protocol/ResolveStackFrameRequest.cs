@@ -35,7 +35,7 @@ public sealed record VsCustomMessageArguments : IDapRequest<VsCustomMessageRespo
 	string IDapRequest.Command => "vsCustomMessage";
 
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 public sealed record VsCustomMessageResponse;
@@ -49,25 +49,25 @@ public static class StackFrameExtensions
 	{
 		public bool? IsResolved
 		{
-			get => stackFrame.AdditionalProperties?["isResolved"]?.GetValue<bool>();
-			set => SetAdditionalProperty(stackFrame, "isResolved", value);
+			get => stackFrame.AdditionalProperties is { } properties && properties.TryGetValue("isResolved", out var value) ? value.GetBoolean() : null;
+			set => SetAdditionalProperty(stackFrame, "isResolved", value is null ? null : JsonSerializer.SerializeToElement(value.Value));
 		}
 
 		/// <remarks>Serialized with default (PascalCase) property names, for compatibility with existing clients.</remarks>
 		public DecompiledSourceInfo? DecompiledSourceInfo
 		{
-			get => stackFrame.AdditionalProperties?["decompiledSourceInfo"]?.Deserialize<DecompiledSourceInfo>();
-			set => SetAdditionalProperty(stackFrame, "decompiledSourceInfo", value is null ? null : JsonSerializer.SerializeToNode(value));
+			get => stackFrame.AdditionalProperties is { } properties && properties.TryGetValue("decompiledSourceInfo", out var value) ? value.Deserialize<DecompiledSourceInfo>() : null;
+			set => SetAdditionalProperty(stackFrame, "decompiledSourceInfo", value is null ? null : JsonSerializer.SerializeToElement(value));
 		}
 	}
 
-	private static void SetAdditionalProperty(StackFrame stackFrame, string name, JsonNode? value)
+	private static void SetAdditionalProperty(StackFrame stackFrame, string name, JsonElement? value)
 	{
 		if (value is null)
 		{
 			stackFrame.AdditionalProperties?.Remove(name);
 			return;
 		}
-		(stackFrame.AdditionalProperties ??= [])[name] = value;
+		(stackFrame.AdditionalProperties ??= [])[name] = value.Value;
 	}
 }

@@ -19,5 +19,28 @@ public sealed record DapError(string Message)
 
 /// <summary>
 /// The outcome of a request: either the response body <typeparamref name="T"/>, or a <see cref="DapError"/>.
+/// (Hand-written stand-in for upstream's C# 15 <c>union DapResult&lt;T&gt;(T, DapError)</c>, whose runtime
+/// types <c>System.Runtime.CompilerServices.IUnion</c>/<c>UnionAttribute</c> only exist in .NET 11. The
+/// desktop adapter targets net10.0 so OpenDevelop's .NET 10 SDK host can launch it.)
 /// </summary>
-public union DapResult<T>(T, DapError);
+public readonly struct DapResult<T> where T : notnull
+{
+	/// <summary>The response body, when the request succeeded.</summary>
+	public T? Body { get; }
+
+	/// <summary>The error, when the request failed.</summary>
+	public DapError? Error { get; }
+
+	/// <summary>The body or the error, as an object, matching the union's generated <c>Value</c>.</summary>
+	public object? Value => Error is { } error ? error : Body;
+
+	private DapResult(T? body, DapError? error)
+	{
+		Body = body;
+		Error = error;
+	}
+
+	public static implicit operator DapResult<T>(T body) => new(body, null);
+
+	public static implicit operator DapResult<T>(DapError error) => new(default, error);
+}

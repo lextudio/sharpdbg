@@ -136,9 +136,8 @@ public partial class ModuleMetadataReader
 		sourceText = null;
 		var reader = _pdbMetadataReader;
 		if (reader is null) return false;
-		var normalizedPath = NormalizePath(sourceFilePath);
-		var documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
-		if (documentHandle.IsNil) return false;
+		if (FindDocument(sourceFilePath) is not { } document) return false;
+		var documentHandle = document.Handle;
 
 		foreach (var handle in reader.GetCustomDebugInformation(documentHandle))
 		{
@@ -242,9 +241,8 @@ public partial class ModuleMetadataReader
 	{
 		var reader = _pdbMetadataReader;
 		if (reader is null) return [];
-		var normalizedPath = NormalizePath(sourceFilePath);
-		var documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
-		if (documentHandle.IsNil) return [];
+		if (FindDocument(sourceFilePath) is not { } document) return [];
+		var documentHandle = document.Handle;
 
 		var results = new List<(int Line, int Column, int EndLine, int EndColumn)>();
 		var seen = new HashSet<(int, int, int, int)>();

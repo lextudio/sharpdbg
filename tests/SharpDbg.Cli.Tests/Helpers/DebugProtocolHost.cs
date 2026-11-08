@@ -78,12 +78,12 @@ public sealed class DebugProtocolHost : IDisposable
 	public DapResult<TResponse> SendRequest<TResponse>(IDapRequest<TResponse> request) => _connection.SendRequest(request);
 
 	/// <summary>Sends a request, throwing <see cref="DapRequestFailedException"/> if the adapter responds with an error.</summary>
-	public TResponse SendRequestSync<TResponse>(IDapRequest<TResponse> request) => _connection.SendRequest(request) switch
+	public TResponse SendRequestSync<TResponse>(IDapRequest<TResponse> request)
 	{
-		DapError error => throw new DapRequestFailedException(request.Command, error),
-		TResponse response => response,
-		null => throw new InvalidOperationException("No result"),
-	};
+		var result = _connection.SendRequest(request);
+		if (result.Error is { } error) throw new DapRequestFailedException(request.Command, error);
+		return result.Body ?? throw new InvalidOperationException("No result");
+	}
 
 	public void Dispose()
 	{

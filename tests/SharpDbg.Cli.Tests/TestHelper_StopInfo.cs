@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using SharpDbg.Cli.Tests.Helpers;
 using SharpDbg.DapProtocol;
@@ -16,11 +17,11 @@ public static partial class TestHelper
 			var topFrame = stackTraceResponse.StackFrames.Single();
 			if (topFrame.Source is null) return; // Stop has no source, e.g. exception in library code with JMC Enabled
 			var filePath = topFrame.Source.Path!.Replace('/', Path.DirectorySeparatorChar);
-			stoppedEvent.AdditionalProperties = new JsonObject
+			stoppedEvent.AdditionalProperties = new Dictionary<string, JsonElement>
 			{
-				["source"] = new JsonObject { ["path"] = filePath },
-				["line"] = topFrame.Line,
-				["column"] = topFrame.Column
+				["source"] = JsonSerializer.SerializeToElement(new { path = filePath }),
+				["line"] = JsonSerializer.SerializeToElement(topFrame.Line),
+				["column"] = JsonSerializer.SerializeToElement(topFrame.Column)
 			};
 		}
 	}

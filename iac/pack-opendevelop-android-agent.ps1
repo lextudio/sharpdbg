@@ -14,7 +14,6 @@
 #
 # Usage:
 #   ./iac/pack-opendevelop-android-agent.ps1 -Version 1.0.0-lextudio.local
-#   ./iac/pack-opendevelop-android-agent.ps1 -Version 1.0.0-lextudio.123.1 -NuGetConfigPath /tmp/dap-nuget.config
 #
 [CmdletBinding()]
 param(
@@ -24,11 +23,7 @@ param(
     [string]$AndroidNdkDirectory = '',
     [string[]]$RuntimeIdentifiers = @('android-arm64', 'android-x64', 'android-arm'),
     # Defaults to artifacts/packages, the folder the publishing workflow uploads.
-    [string]$OutputDirectory = '',
-    # A restore configuration that can see the OmniSharp DAP fork (GitHub Packages in CI, the local
-    # feed of the enclosing OpenDevelop checkout on a developer machine). Without it the repository's
-    # own nuget.config applies, which points at a local feed that only exists inside OpenDevelop.
-    [string]$NuGetConfigPath = ''
+    [string]$OutputDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,7 +70,7 @@ $scratch = Join-Path ([IO.Path]::GetTempPath()) ('sharpdbg-android-agent-' + [gu
 $originalDirectory = Get-Location
 try {
     New-Item -ItemType Directory -Path (Join-Path $scratch 'src') -Force | Out-Null
-    foreach ($project in @('SharpDbg.AndroidAgent', 'SharpDbg.Application', 'SharpDbg.Infrastructure')) {
+    foreach ($project in @('SharpDbg.AndroidAgent', 'SharpDbg.Application', 'SharpDbg.Infrastructure', 'SharpDbg.DapProtocol')) {
         $projectRoot = Join-Path (Join-Path $root 'src') $project
         $destination = Join-Path (Join-Path $scratch 'src') $project
         Get-ChildItem -LiteralPath $projectRoot -File -Recurse | Where-Object {
@@ -90,31 +85,16 @@ try {
     Copy-Item -LiteralPath (Join-Path $root 'Directory.Build.props') -Destination $scratch
 
     # The scratch directory is outside the repository, so NuGet's walk up from the project finds no
-    # config at all. Supply one: either the caller's (CI: GitHub Packages with the job token) or one
-    # built around the local feed an OpenDevelop checkout keeps at artifacts/openavalon-feed.
-    if ($NuGetConfigPath) {
-        if (-not (Test-Path -LiteralPath $NuGetConfigPath -PathType Leaf)) { throw "NuGet configuration not found: $NuGetConfigPath" }
-        Copy-Item -LiteralPath $NuGetConfigPath -Destination (Join-Path $scratch 'nuget.config')
-    } else {
-        $dapFeed = Join-Path $root '../../artifacts/openavalon-feed'
-        if (-not (Test-Path -LiteralPath $dapFeed -PathType Container)) {
-            throw "The OmniSharp DAP fork feed was not found at $dapFeed. Run the enclosing OpenDevelop checkout's ./sync-openavalon-feed.ps1, or pass -NuGetConfigPath."
-        }
-        @"
+    # config at all. Every package the agent needs is on nuget.org.
+    @"
 <?xml version="1.0" encoding="utf-8"?>
 <configuration>
   <packageSources>
     <clear />
     <add key="nuget" value="https://api.nuget.org/v3/index.json" />
-    <add key="dap-local" value="$([System.Security.SecurityElement]::Escape($dapFeed))" />
   </packageSources>
-  <packageSourceMapping>
-    <packageSource key="dap-local"><package pattern="OmniSharp.Extensions.*" /></packageSource>
-    <packageSource key="nuget"><package pattern="*" /></packageSource>
-  </packageSourceMapping>
 </configuration>
 "@ | Set-Content -LiteralPath (Join-Path $scratch 'nuget.config') -Encoding utf8
-    }
     @{ sdk = @{ version = $sdkVersion; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
 
     Set-Location $scratch

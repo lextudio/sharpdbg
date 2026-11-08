@@ -1,5 +1,5 @@
+using SharpDbg.DapProtocol;
 using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
 using SharpDbg.Cli.Tests.Helpers;
 
 namespace SharpDbg.Cli.Tests;
@@ -119,7 +119,7 @@ public class StepTests(ITestOutputHelper testOutputHelper)
 		debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2);
 		var decompiledFrameSource = stackTraceResponse2.StackFrames!.Single().Source;
 		decompiledFrameSource!.SourceReference.Should().BeGreaterThan(0, "decompiled source is served by reference, it has no file on disk");
-		var decompiledSource = debugProtocolHost.SendRequestSync(new SourceRequest { SourceReference = decompiledFrameSource.SourceReference!.Value });
+		var decompiledSource = debugProtocolHost.SendRequestSync(new SourceArguments { SourceReference = decompiledFrameSource.SourceReference!.Value });
 		var decompiledLines = decompiledSource.Content.Split('\n');
 		stopInfo2.line.Should().BeInRange(1, decompiledLines.Length);
 		decompiledLines[stopInfo2.line - 1].Trim().Should().Be("Out.WriteLine(value);");

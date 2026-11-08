@@ -11,17 +11,12 @@
 #
 # Usage:
 #   ./iac/pack-opendevelop-cli.ps1 -Version 1.0.0-lextudio.local
-#   ./iac/pack-opendevelop-cli.ps1 -Version 1.0.0-lextudio.123.1 -NuGetConfigPath /tmp/dap-nuget.config
 #
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Version,
     # Defaults to artifacts/packages, the folder the publishing workflow uploads.
-    [string]$OutputDirectory = '',
-    # A restore configuration that can see the OmniSharp DAP fork (GitHub Packages in CI, the local
-    # feed on a developer machine). Without it the repository's own nuget.config applies, which
-    # only knows nuget.org and the local feed.
-    [string]$NuGetConfigPath = ''
+    [string]$OutputDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,9 +32,6 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ('sharpdbg-cli-pack-' + [guid]::Ne
 try {
     $cliOutput = Join-Path $stage 'cli'
     $publishArguments = @('publish', (Join-Path $root 'src/SharpDbg.Cli/SharpDbg.Cli.csproj'), '-c', 'Release', '-o', $cliOutput, '-tl:off')
-    if ($NuGetConfigPath) {
-        $publishArguments += "-p:RestoreConfigFile=$NuGetConfigPath"
-    }
     Write-Host '==> Publishing SharpDbg.Cli'
     & dotnet @publishArguments
     if ($LASTEXITCODE -ne 0) { throw 'Publishing SharpDbg.Cli failed.' }

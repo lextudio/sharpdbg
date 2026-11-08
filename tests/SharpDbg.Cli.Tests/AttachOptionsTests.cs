@@ -1,10 +1,9 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using Newtonsoft.Json.Linq;
 using ICorDebugSharp;
 using SharpDbg.Cli.Tests.Helpers;
+using SharpDbg.DapProtocol;
 using SharpDbg.Infrastructure;
 
 namespace SharpDbg.Cli.Tests;
@@ -21,20 +20,20 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 		// since a second copy of mscordbi from another directory in this process deadlocks the tests that follow.
 		// That the provider hands out its own directory is DirectoryLibraryProvider_* below.
 		var libraries = RuntimeEnvironment.GetRuntimeDirectory();
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
+		var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
 		using var _ = adapter;
 		using var __ = new ProcessKiller(p2);
 		using var ___ = debugProtocolHost;
 
 		debugProtocolHost.WithInitializeRequest();
 		debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["debuggerLibraryDirectory"] = libraries }));
-		await debugProtocolHost.WaitForInitializedEvent(initializedEventTcs);
+		await debugProtocolHost.WaitForInitializedEvent();
 		debugProtocolHost
 			.WithBreakpointsRequest(22, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClass.cs"))
 			.WithConfigurationDoneRequest()
 			.WithOptionalResumeRuntime(p2.Id, startSuspended: true);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
+		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
 		stoppedEvent.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
 	}
 
@@ -77,13 +76,13 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 	public void Attach_WithDebuggerLibraryDirectory_IsRejectedOnWindows()
 	{
 		Assert.SkipUnless(OperatingSystem.IsWindows(), "covered by the Unix attach test");
-		var (debugProtocolHost, _, _, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: false);
+		var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: false);
 		using var _ = adapter;
 		using var __ = new ProcessKiller(p2);
 		using var ___ = debugProtocolHost;
 
 		debugProtocolHost.WithInitializeRequest();
-		var error = Assert.Throws<ProtocolException>(() =>
+		var error = Assert.Throws<DapRequestFailedException>(() =>
 			debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["debuggerLibraryDirectory"] = Path.GetTempPath() })));
 		error.Message.Should().Contain("not supported on Windows");
 	}
@@ -96,27 +95,23 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 		var empty = Directory.CreateTempSubdirectory("sharpdbg-no-dbi-");
 		try
 		{
-			var (debugProtocolHost, initializedEventTcs, _, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
+			var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
 			using var _ = adapter;
 			using var __ = new ProcessKiller(p2);
 			using var ___ = debugProtocolHost;
-			var failureOutput = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-			var terminated = new TaskCompletionSource<TerminatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-			debugProtocolHost.RegisterEventType<OutputEvent>(e => { if ((e.Output ?? string.Empty).Contains("failed", StringComparison.Ordinal)) failureOutput.TrySetResult(e); });
-			debugProtocolHost.RegisterEventType<TerminatedEvent>(e => terminated.TrySetResult(e));
 
 			debugProtocolHost.WithInitializeRequest();
 			debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["debuggerLibraryDirectory"] = empty.FullName }));
-			await debugProtocolHost.WaitForInitializedEvent(initializedEventTcs);
+			await debugProtocolHost.WaitForInitializedEvent();
 			// The failure comes when the runtime starts and dbgshim asks the provider for mscordbi
 			debugProtocolHost
 				.WithConfigurationDoneRequest()
 				.WithOptionalResumeRuntime(p2.Id, startSuspended: true);
 
-			var output = await failureOutput.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+			var output = await debugProtocolHost.WaitForEvent<OutputEvent>(e => (e.Output ?? string.Empty).Contains("failed", StringComparison.Ordinal));
 			output.Output.Should().Contain($"Attach to process {p2.Id} failed");
 			output.Category.Should().Be(OutputEvent.CategoryValue.Stderr);
-			await terminated.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+			await debugProtocolHost.WaitForEvent<TerminatedEvent>();
 		}
 		finally
 		{
@@ -128,14 +123,14 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 	public void Attach_WithMissingDebuggerLibraryDirectory_FailsTheRequest()
 	{
 		Assert.SkipWhen(OperatingSystem.IsWindows(), "the option is rejected on Windows before the directory is checked");
-		var (debugProtocolHost, _, _, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: false);
+		var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: false);
 		using var _ = adapter;
 		using var __ = new ProcessKiller(p2);
 		using var ___ = debugProtocolHost;
 
 		debugProtocolHost.WithInitializeRequest();
 		var missing = Path.Combine(Path.GetTempPath(), "sharpdbg-no-such-dir-" + Guid.NewGuid().ToString("N"));
-		var error = Assert.Throws<ProtocolException>(() =>
+		var error = Assert.Throws<DapRequestFailedException>(() =>
 			debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["debuggerLibraryDirectory"] = missing })));
 		error.Message.Should().Contain("debuggerLibraryDirectory does not exist");
 	}
@@ -144,7 +139,7 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 	public async Task Attach_WithContinueStoppedProcess_ContinuesAStoppedTarget()
 	{
 		Assert.SkipUnless(OperatingSystem.IsMacOS(), "continueStoppedProcess is macOS only");
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
+		var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: true);
 		using var _ = adapter;
 		using var __ = new ProcessKiller(p2);
 		using var ___ = debugProtocolHost;
@@ -155,13 +150,13 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 
 		debugProtocolHost.WithInitializeRequest();
 		debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["continueStoppedProcess"] = true }));
-		await debugProtocolHost.WaitForInitializedEvent(initializedEventTcs);
+		await debugProtocolHost.WaitForInitializedEvent();
 		debugProtocolHost
 			.WithBreakpointsRequest(22, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClass.cs"))
 			.WithConfigurationDoneRequest()
 			.WithOptionalResumeRuntime(p2.Id, startSuspended: true);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
+		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
 		stoppedEvent.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
 	}
 
@@ -169,13 +164,13 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 	public void Attach_WithContinueStoppedProcess_IsRejectedOffMacOS()
 	{
 		Assert.SkipWhen(OperatingSystem.IsMacOS(), "covered by the macOS test");
-		var (debugProtocolHost, _, _, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: false);
+		var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended: false);
 		using var _ = adapter;
 		using var __ = new ProcessKiller(p2);
 		using var ___ = debugProtocolHost;
 
 		debugProtocolHost.WithInitializeRequest();
-		var error = Assert.Throws<ProtocolException>(() =>
+		var error = Assert.Throws<DapRequestFailedException>(() =>
 			debugProtocolHost.SendRequestSync(AttachRequest(p2.Id, new() { ["continueStoppedProcess"] = true })));
 		error.Message.Should().Contain("macOS only");
 	}
@@ -190,11 +185,11 @@ public class AttachOptionsTests(ITestOutputHelper testOutputHelper)
 		throw new TimeoutException($"Process {processId} never opened its diagnostic socket");
 	}
 
-	static AttachRequest AttachRequest(int processId, Dictionary<string, JToken> options)
+	static AttachArguments AttachRequest(int processId, Dictionary<string, object?> options)
 	{
 		var request = DebugAdapterProcessHelper.GetAttachRequest(processId);
 		foreach (var (key, value) in options)
-			request.ConfigurationProperties[key] = value;
+			request.AdditionalProperties![key] = JsonSerializer.SerializeToElement(value);
 		return request;
 	}
 

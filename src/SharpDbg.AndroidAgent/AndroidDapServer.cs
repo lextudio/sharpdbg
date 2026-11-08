@@ -1,29 +1,23 @@
-using Microsoft.Extensions.Logging;
-using System.Text.Json;
-using OmniSharp.Extensions.DebugAdapter.Server;
-using OmniSharp.Extensions.DebugAdapter.Protocol;
-using OmniSharp.Extensions.DebugAdapter.Protocol.Models;
-using OmniSharp.Extensions.JsonRpc;
-using OmniSharp.Extensions.JsonRpc.Server;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using ICorDebugSharp;
+using SharpDbg.DapProtocol;
 using SharpDbg.Infrastructure.Debugger;
 using SharpDbg.Infrastructure.Debugger.Models.Response;
 
-// DAP transport for the in-process Android agent. The protocol and this implementation
-// are independent of the Microsoft VSCodeDebugProtocol library used by the desktop adapter.
-internal sealed class AndroidDapServer
+// DAP transport for the in-process Android agent, on SharpDbg's own DapProtocol (MIT, generated from
+// the DAP specification). It no longer depends on the OmniSharp DAP fork.
+internal sealed class AndroidDapServer : IDapRequestHandler
 {
     readonly Stream stream;
     readonly ManagedDebugger debugger;
     readonly Func<ICorDebug> factory;
     readonly Action ready;
     readonly byte[] token;
-    DebugAdapterServer? server;
-    readonly TaskCompletionSource<bool> eof = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    DapConnection? connection;
     bool attached, disconnected;
     bool linesAtOne = true, columnsAtOne = true;
 
@@ -50,53 +44,75 @@ internal sealed class AndroidDapServer
     {
         try
         {
-            using var tracked = new EofStream(stream, () => eof.TrySetResult(true));
-            server = DebugAdapterServer.Create(options => {
-                options.WithInput(tracked).WithOutput(stream).WithLoggerFactory(new DeviceLogFactory()).WithUnhandledExceptionHandler(ex => Profiler.Log(6, "SharpDbg", "DAP input: " + ex));
-                options.Capabilities.SupportsConfigurationDoneRequest = true;
-                options.Capabilities.SupportsConditionalBreakpoints = true;
-                options.Capabilities.SupportsHitConditionalBreakpoints = true;
-                options.Capabilities.SupportsFunctionBreakpoints = true;
-                options.Capabilities.SupportsLogPoints = true;
-                options.Capabilities.ExceptionBreakpointFilters = new Container<ExceptionBreakpointsFilter>(
-                    new ExceptionBreakpointsFilter { Filter = "all", Label = "All exceptions" },
-                    new ExceptionBreakpointsFilter { Filter = "user-unhandled", Label = "User-unhandled exceptions" });
-                foreach (string command in new[] { "attach", "configurationDone", "setBreakpoints", "setFunctionBreakpoints", "setExceptionBreakpoints", "threads", "stackTrace", "resolveStackFrame", "scopes", "variables", "evaluate", "continue", "next", "stepIn", "stepOut", "pause", "modules", "loadedSources", "disconnect" })
-                {
-                    options.OnJsonRequest(command, async (JsonElement raw, CancellationToken cancellationToken) => {
-                        if (command != "attach" && !attached) throw ToDapError(new InvalidOperationException("Attach with a valid session token first."));
-                        var arguments = JsonNode.Parse(raw.GetRawText()) as JsonObject ?? new JsonObject();
-                        Profiler.Log(4, "SharpDbg", "DAP request: " + command);
-                        JsonObject body;
-                        try { body = await HandleAsync(command, arguments); }
-                        catch (Exception ex) when (ex is not OperationCanceledException) { Profiler.Log(6, "SharpDbg", "DAP request failed: " + command + " " + ex); throw ToDapError(ex); }
-                        Profiler.Log(4, "SharpDbg", "DAP request completed: " + command);
-                        using var document = JsonDocument.Parse(body.ToJsonString());
-                        return document.RootElement.Clone();
-                    });
-                }
-            });
-            var initializing = server.Initialize(CancellationToken.None);
-            if (await Task.WhenAny(initializing, eof.Task) == initializing)
-            {
-                await initializing;
-                linesAtOne = server.ClientSettings.LinesStartAt1;
-                columnsAtOne = server.ClientSettings.ColumnsStartAt1;
-                await eof.Task;
-            }
+            connection = new DapConnection(stream, stream, this, new DapConnectionOptions { Log = message => Profiler.Log(6, "SharpDbg", message) });
+            connection.Start();
+            await connection.Completion;
         }
         finally
         {
             Profiler.Log(4, "SharpDbg", "DAP server ending; attached=" + attached + " disconnected=" + disconnected);
             ready();
             if (attached && !disconnected) try { debugger.Disconnect(false); } catch { }
-            server?.Dispose();
+            connection?.Stop();
         }
     }
 
-    // The library wraps any other exception as "Internal Error - <exception.ToString()>", which would send the exception
-    // type and call stack over adb to the IDE. RpcErrorException carries just our message.
-    static RpcErrorException ToDapError(Exception ex) => new(ErrorCodes.InternalError, ex.GetType().Name, ex.Message);
+    public ValueTask<DapResponse> HandleRequestAsync(IDapRequest request, DapRequestContext context)
+    {
+        switch (request)
+        {
+            case InitializeArguments initialize:
+                linesAtOne = initialize.LinesStartAt1 ?? true;
+                columnsAtOne = initialize.ColumnsStartAt1 ?? true;
+                // DAP requires the 'initialized' event after the initialize response, not before it.
+                context.OnResponseSent(() => connection?.SendEvent(new InitializedEvent()));
+                return ValueTask.FromResult(DapResponse.Success(Capabilities()));
+            case UnknownRequest unknown when unknown.Command == "resolveStackFrame":
+                var raw = unknown.Arguments is { ValueKind: JsonValueKind.Object } element
+                    ? (JsonObject)JsonNode.Parse(element.GetRawText())!
+                    : new JsonObject();
+                return HandleJsonAsync(unknown.Command, raw);
+            case UnknownRequest:
+                return DapResponse.NotSupported(request);
+        }
+
+        if (!attached && request is not AttachArguments)
+            return ValueTask.FromResult(DapResponse.Failure(new DapError("Attach with a valid session token first.")));
+
+        // The handlers below work on DAP JSON. Re-serialize the typed arguments (including their
+        // additional properties, e.g. attach's sessionToken/justMyCode) so there is one code path.
+        var arguments = JsonSerializer.SerializeToNode(request, DapJson.DefaultOptions.GetTypeInfo(request.GetType())) as JsonObject ?? new JsonObject();
+        return HandleJsonAsync(request.Command, arguments);
+    }
+
+    async ValueTask<DapResponse> HandleJsonAsync(string command, JsonObject arguments)
+    {
+        Profiler.Log(4, "SharpDbg", "DAP request: " + command);
+        try
+        {
+            JsonObject body = await HandleAsync(command, arguments);
+            using var document = JsonDocument.Parse(body.ToJsonString());
+            return DapResponse.Success(document.RootElement.Clone());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Profiler.Log(6, "SharpDbg", "DAP request failed: " + command + " " + ex);
+            return DapResponse.Failure(new DapError(ex.Message));
+        }
+    }
+
+    static Capabilities Capabilities() => new()
+    {
+        SupportsConfigurationDoneRequest = true,
+        SupportsConditionalBreakpoints = true,
+        SupportsHitConditionalBreakpoints = true,
+        SupportsFunctionBreakpoints = true,
+        SupportsLogPoints = true,
+        ExceptionBreakpointFilters = [
+            new ExceptionBreakpointsFilter { Filter = "all", Label = "All exceptions" },
+            new ExceptionBreakpointsFilter { Filter = "user-unhandled", Label = "User-unhandled exceptions" }
+        ]
+    };
 
     async Task<JsonObject> HandleAsync(string command, JsonObject args)
     {
@@ -166,45 +182,7 @@ internal sealed class AndroidDapServer
     void Event(string name, JsonObject body)
     {
         using var document = JsonDocument.Parse(body.ToJsonString());
-        server?.SendNotification(name, document.RootElement.Clone());
+        connection?.SendRawEvent(name, document.RootElement.Clone());
     }
 
-    private sealed class EofStream(Stream inner, Action onEof) : Stream
-    {
-        public override bool CanRead => inner.CanRead;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            try { int read = inner.Read(buffer, offset, count); if (read == 0 && count != 0) { Profiler.Log(4, "SharpDbg", "DAP stream EOF (sync)"); onEof(); } return read; }
-            catch (Exception ex) { Profiler.Log(6, "SharpDbg", "DAP stream read: " + ex); onEof(); throw; }
-        }
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            try { int read = await inner.ReadAsync(buffer, cancellationToken); if (read == 0 && buffer.Length != 0) { Profiler.Log(4, "SharpDbg", "DAP stream EOF (async)"); onEof(); } return read; }
-            catch (Exception ex) { Profiler.Log(6, "SharpDbg", "DAP stream read: " + ex); onEof(); throw; }
-        }
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    }
-    private sealed class DeviceLogFactory : ILoggerFactory
-    {
-        public void AddProvider(ILoggerProvider provider) { }
-        public ILogger CreateLogger(string categoryName) => new DeviceLogger(categoryName);
-        public void Dispose() { }
-    }
-    private sealed class DeviceLogger(string category) : ILogger
-    {
-        public IDisposable BeginScope<TState>(TState state) where TState : notnull => new DeviceScope();
-        public bool IsEnabled(LogLevel level) => level >= LogLevel.Warning;
-        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        { if (IsEnabled(level)) Profiler.Log(6, "SharpDbg", category + " " + formatter(state, exception) + " " + exception); }
-    }
-    private sealed class DeviceScope : IDisposable { public void Dispose() { } }
 }

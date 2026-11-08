@@ -90,12 +90,10 @@ public sealed class DapResponse
 	public static DapResponse Failure(DapError error) => new(null, null, error);
 
 	/// <summary>Creates a response from a handler result.</summary>
-	public static DapResponse From<T>(DapResult<T> dapResult) where T : notnull => dapResult switch
-	{
-		DapError error => Failure(error),
-		T body => Success(body),
-		null => throw new InvalidOperationException("Result was not initialized"),
-	};
+	public static DapResponse From<T>(DapResult<T> dapResult) where T : notnull =>
+		dapResult.Error is { } error ? Failure(error)
+		: dapResult.Body is { } body ? Success(body)
+		: throw new InvalidOperationException("Result was not initialized");
 
 	/// <summary>The error response for a request this adapter does not support.</summary>
 	public static ValueTask<DapResponse> NotSupported(IDapRequest request) =>

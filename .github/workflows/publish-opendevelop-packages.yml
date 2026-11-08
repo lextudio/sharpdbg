@@ -42,28 +42,8 @@ jobs:
           global-json-file: global.json
       - name: Pack LeXtudio.SharpDbg.Cli
         shell: pwsh
-        env:
-          NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
         run: |
-          # The OmniSharp DAP fork lives on GitHub Packages, and this repository's nuget.config only
-          # knows nuget.org. Restore through a scratch configuration that adds the feed and keeps the
-          # package-source mapping that pins OmniSharp.Extensions.* to it.
-          $config = Join-Path $env:RUNNER_TEMP 'dap-nuget.config'
-          @'
-          <?xml version="1.0" encoding="utf-8"?>
-          <configuration>
-            <packageSources>
-              <clear />
-              <add key="nuget" value="https://api.nuget.org/v3/index.json" />
-              <add key="lextudio_github" value="https://nuget.pkg.github.com/lextudio/index.json" />
-            </packageSources>
-            <packageSourceMapping>
-              <packageSource key="lextudio_github"><package pattern="OmniSharp.Extensions.*" /></packageSource>
-              <packageSource key="nuget"><package pattern="*" /></packageSource>
-            </packageSourceMapping>
-          </configuration>
-          '@ | Set-Content -LiteralPath $config -Encoding utf8
-          ./iac/pack-opendevelop-cli.ps1 -Version "1.0.0-lextudio.${{ github.run_id }}.1" -NuGetConfigPath $config
+          ./iac/pack-opendevelop-cli.ps1 -Version "1.0.0-lextudio.${{ github.run_id }}.1"
       - uses: actions/upload-artifact@v7
         with:
           name: opendevelop-packages
@@ -112,25 +92,8 @@ jobs:
           "$sdkmanager" 'ndk;27.2.12479018'
       - name: Pack LeXtudio.SharpDbg.AndroidAgent
         shell: pwsh
-        env:
-          NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
         run: |
-          $config = Join-Path $env:RUNNER_TEMP 'dap-nuget.config'
-          @'
-          <?xml version="1.0" encoding="utf-8"?>
-          <configuration>
-            <packageSources>
-              <clear />
-              <add key="nuget" value="https://api.nuget.org/v3/index.json" />
-              <add key="lextudio_github" value="https://nuget.pkg.github.com/lextudio/index.json" />
-            </packageSources>
-            <packageSourceMapping>
-              <packageSource key="lextudio_github"><package pattern="OmniSharp.Extensions.*" /></packageSource>
-              <packageSource key="nuget"><package pattern="*" /></packageSource>
-            </packageSourceMapping>
-          </configuration>
-          '@ | Set-Content -LiteralPath $config -Encoding utf8
-          ./iac/pack-opendevelop-android-agent.ps1 -Version "1.0.0-lextudio.${{ github.run_id }}.1" -NuGetConfigPath $config `
+          ./iac/pack-opendevelop-android-agent.ps1 -Version "1.0.0-lextudio.${{ github.run_id }}.1" `
             -AndroidSdkDirectory $env:ANDROID_HOME -AndroidNdkDirectory (Join-Path $env:ANDROID_HOME 'ndk/27.2.12479018')
       - uses: actions/upload-artifact@v7
         with:

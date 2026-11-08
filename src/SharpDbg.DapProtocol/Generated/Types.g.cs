@@ -273,7 +273,7 @@ public sealed partial record Capabilities
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -319,7 +319,7 @@ public sealed partial record ExceptionBreakpointsFilter
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -372,7 +372,7 @@ public sealed partial record Message
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -448,7 +448,7 @@ public sealed partial record Module
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -490,7 +490,7 @@ public sealed partial record ColumnDescriptor
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// Datatype of values in this column. Defaults to `string` if not specified.
@@ -542,7 +542,7 @@ public sealed partial record Thread
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -607,7 +607,7 @@ public sealed partial record Source
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// A hint for how to present the source in the UI.
@@ -712,7 +712,7 @@ public sealed partial record StackFrame
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// A hint for how to present this frame in the UI.
@@ -817,7 +817,7 @@ public sealed partial record Scope
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// A hint for how to present this scope in the UI. If this attribute is missing, the scope is shown with a generic UI.
@@ -941,7 +941,7 @@ public sealed partial record Variable
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -977,7 +977,7 @@ public sealed partial record VariablePresentationHint
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The kind of variable. Before introducing additional values, try to use the listed values.
@@ -1146,7 +1146,7 @@ public sealed partial record BreakpointLocation
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1199,7 +1199,7 @@ public sealed partial record SourceBreakpoint
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1230,7 +1230,7 @@ public sealed partial record FunctionBreakpoint
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1290,7 +1290,7 @@ public sealed partial record DataBreakpoint
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1335,7 +1335,7 @@ public sealed partial record InstructionBreakpoint
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1417,7 +1417,7 @@ public sealed partial record Breakpoint
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// A machine-readable explanation of why a breakpoint may not be verified. If a breakpoint is verified or a specific reason is not known, the adapter should omit this property. Possible values include:
@@ -1515,7 +1515,7 @@ public sealed partial record StepInTarget
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1568,7 +1568,7 @@ public sealed partial record GotoTarget
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1632,7 +1632,7 @@ public sealed partial record CompletionItem
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1772,7 +1772,7 @@ public sealed partial record Checksum
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1788,7 +1788,7 @@ public sealed partial record ValueFormat
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1840,7 +1840,7 @@ public sealed partial record StackFrameFormat
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1869,7 +1869,7 @@ public sealed partial record ExceptionFilterOptions
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1892,7 +1892,7 @@ public sealed partial record ExceptionOptions
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1948,7 +1948,7 @@ public sealed partial record ExceptionPathSegment
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -1994,7 +1994,7 @@ public sealed partial record ExceptionDetails
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -2068,7 +2068,7 @@ public sealed partial record DisassembledInstruction
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// A hint for how to present the instruction in the UI.
@@ -2155,7 +2155,7 @@ public sealed partial record BreakpointMode
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -2186,4 +2186,3 @@ public readonly partial record struct BreakpointModeApplicability(string Name) :
 	/// <inheritdoc/>
 	public override string ToString() => Name;
 }
-

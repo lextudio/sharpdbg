@@ -1,13 +1,12 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using Newtonsoft.Json.Linq;
-using SharpDbg.Application.Protocol;
 using SharpDbg.Cli.Tests.Helpers;
+using SharpDbg.DapProtocol;
 using SharpDbg.Infrastructure.Debugger;
 using SharpDbg.InMemory;
-using StackFrame = Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages.StackFrame;
+using StackFrame = SharpDbg.DapProtocol.StackFrame;
 
 namespace SharpDbg.Cli.Tests;
 
@@ -42,8 +41,8 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		host.Run();
 		var response = host.SendRequestSync(DebugAdapterProcessHelper.GetInitializeRequest());
 
-		var property = typeof(InitializeResponse).GetProperty(capability);
-		property.Should().NotBeNull($"InitializeResponse should expose the '{capability}' capability");
+		var property = typeof(Capabilities).GetProperty(capability);
+		property.Should().NotBeNull($"Capabilities should expose the '{capability}' capability");
 		((bool?)property!.GetValue(response)).Should().BeTrue($"a modern debug adapter advertises '{capability}'");
 	}
 
@@ -55,7 +54,7 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task GotoTargets_IsSupported()
 	{
 		using var session = await StopInAsync(VariablesFile, 149);
-		var response = session.Host.SendRequestSync(new GotoTargetsRequest { Source = new Source { Path = VariablesFile }, Line = 113 });
+		var response = session.Host.SendRequestSync(new GotoTargetsArguments { Source = new Source { Path = VariablesFile }, Line = 113 });
 		response.Targets.Should().NotBeNullOrEmpty("gotoTargets should list the statement positions on the line");
 	}
 
@@ -63,28 +62,28 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task Goto_IsSupported()
 	{
 		using var session = await StopInAsync(VariablesFile, 149);
-		var targets = session.Host.SendRequestSync(new GotoTargetsRequest { Source = new Source { Path = VariablesFile }, Line = 113 });
+		var targets = session.Host.SendRequestSync(new GotoTargetsArguments { Source = new Source { Path = VariablesFile }, Line = 113 });
 		targets.Targets.Should().NotBeNullOrEmpty();
 
-		var ex = Record.Exception(() => session.Host.SendRequestSync(new GotoRequest { ThreadId = session.ThreadId, TargetId = targets.Targets[0].Id }));
+		var ex = Record.Exception(() => session.Host.SendRequestSync(new GotoArguments { ThreadId = session.ThreadId, TargetId = targets.Targets[0].Id }));
 		ex.Should().BeNull($"goto should move the instruction pointer; got: {ex?.Message}");
 
-		var stopped = await session.Host.WaitForStoppedEvent(session.Events);
+		var stopped = await session.Host.WaitForStoppedEvent();
 		stopped.Reason.Should().Be(StoppedEvent.ReasonValue.Goto);
 	}
 
 	[Fact]
 	public void LoadedSources_IsSupported() => WithInitializedHost(host =>
-		AssertSupported(host, "loadedSources", new LoadedSourcesRequest()));
+		AssertSupported(host, "loadedSources", new LoadedSourcesArguments()));
 
 	[Fact]
 	public void BreakpointLocations_IsSupported() => WithInitializedHost(host =>
-		AssertSupported(host, "breakpointLocations", new BreakpointLocationsRequest { Source = new Source { Path = MyClassFile }, Line = 11 }));
+		AssertSupported(host, "breakpointLocations", new BreakpointLocationsArguments { Source = new Source { Path = MyClassFile }, Line = 11 }));
 
 	[Fact]
 	public async Task Restart_IsSupported()
 	{
-		var (host, initializedEventTcs, events, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
+		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
 		using var _ = adapter;
 		using var __ = host;
 		var program = Path.JoinFromGitRoot("artifacts", "bin", "DebuggableConsoleApp", "debug", "DebuggableConsoleApp.dll");
@@ -92,28 +91,28 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		await host
 			.WithInitializeRequest()
 			.WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
+			.WaitForInitializedEvent();
 		host.WithConfigurationDoneRequest();
-		var first = await host.WaitForStoppedEvent(events);
+		var first = await host.WaitForStoppedEvent();
 		first.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
 
-		var ex = Record.Exception(() => host.SendRequestSync(new RestartRequest()));
+		var ex = Record.Exception(() => host.SendRequestSync(new RestartArguments()));
 		ex.Should().BeNull($"restart should relaunch the session; got: {ex?.Message}");
 
 		// The restarted session stops at entry again.
-		var second = await host.WaitForStoppedEvent(events);
+		var second = await host.WaitForStoppedEvent();
 		second.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
 	}
 
 	[Fact]
 	public void Source_IsSupported() => WithInitializedHost(host =>
-		AssertSupported(host, "source", new SourceRequest { Source = new Source { Path = MyClassFile }, SourceReference = 1 }));
+		AssertSupported(host, "source", new SourceArguments { Source = new Source { Path = MyClassFile }, SourceReference = 1 }));
 
 	[Fact]
 	public async Task Modules_IsSupported()
 	{
 		using var session = await StopInAsync(MyClassFile, 11);
-		var response = session.Host.SendRequestSync(new ModulesRequest());
+		var response = session.Host.SendRequestSync(new ModulesArguments());
 		response.Modules.Should().NotBeNullOrEmpty("the loaded modules should be listed");
 		response.Modules.Should().Contain(m => (m.Path ?? string.Empty).EndsWith("DebuggableConsoleApp.dll", StringComparison.Ordinal));
 	}
@@ -122,22 +121,19 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task Logpoint_LogsAndContinues()
 	{
 		var startSuspended = true;
-		var (host, initializedEventTcs, events, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
+		var (host, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
 		using var adapterScope = adapter;
 		using var killer = new ProcessKiller(debuggee);
 		using var hostScope = host;
 
-		var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-		host.RegisterEventType<OutputEvent>(e => { if ((e.Output ?? string.Empty).Contains("logpoint", StringComparison.Ordinal)) outputTcs.TrySetResult(e); });
-
-		await host.WithInitializeRequest().WithAttachRequest(debuggee.Id).WaitForInitializedEvent(initializedEventTcs);
+		await host.WithInitializeRequest().WithAttachRequest(debuggee.Id).WaitForInitializedEvent();
 		host
 			.WithBreakpointsRequest(VariablesFile, [new SharpDbgBreakpointRequest(149, LogMessage: "logpoint {localInt}")])
 			.WithConfigurationDoneRequest()
 			.WithOptionalResumeRuntime(debuggee.Id, startSuspended);
 
 		// A logpoint writes its interpolated message and continues, instead of stopping.
-		var output = await outputTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+		var output = await host.WaitForEvent<OutputEvent>(e => (e.Output ?? string.Empty).Contains("logpoint", StringComparison.Ordinal));
 		output.Output.Should().Contain("logpoint 3");
 	}
 
@@ -145,18 +141,15 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task LoadedSourceEvent_IsRaisedForUserSources()
 	{
 		var startSuspended = true;
-		var (host, initializedEventTcs, events, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
+		var (host, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
 		using var adapterScope = adapter;
 		using var killer = new ProcessKiller(debuggee);
 		using var hostScope = host;
 
-		var loadedTcs = new TaskCompletionSource<LoadedSourceEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-		host.RegisterEventType<LoadedSourceEvent>(e => { if ((e.Source?.Path ?? string.Empty).EndsWith("VariablesClass.cs", StringComparison.Ordinal)) loadedTcs.TrySetResult(e); });
-
-		await host.WithInitializeRequest().WithAttachRequest(debuggee.Id).WaitForInitializedEvent(initializedEventTcs);
+		await host.WithInitializeRequest().WithAttachRequest(debuggee.Id).WaitForInitializedEvent();
 		host.WithConfigurationDoneRequest().WithOptionalResumeRuntime(debuggee.Id, startSuspended);
 
-		var loaded = await loadedTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+		var loaded = await host.WaitForEvent<LoadedSourceEvent>(e => (e.Source?.Path ?? string.Empty).EndsWith("VariablesClass.cs", StringComparison.Ordinal));
 		loaded.Reason.Should().Be(LoadedSourceEvent.ReasonValue.New);
 	}
 
@@ -164,29 +157,23 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task Attach_WithOptions_StillHitsBreakpoint()
 	{
 		var startSuspended = true;
-		var (host, initializedEventTcs, events, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
+		var (host, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
 		using var adapterScope = adapter;
 		using var killer = new ProcessKiller(debuggee);
 		using var hostScope = host;
 
-		await host.WithInitializeRequest().WaitForInitializedEvent(initializedEventTcs);
-		host.SendRequestSync(new AttachRequest
+		await host.WithInitializeRequest().WaitForInitializedEvent();
+		host.SendRequestSync(AttachWithOptions(debuggee.Id, new()
 		{
-			ConfigurationProperties = new Dictionary<string, JToken>
-			{
-				["name"] = "AttachRequestName",
-				["type"] = "coreclr",
-				["processId"] = debuggee.Id,
-				["stopAtEntry"] = false,
-				["suppressJITOptimizations"] = true,
-				["enableStepFiltering"] = true,
-				["sourceFileMap"] = new JObject { ["/original/"] = "/mapped/" },
-				["expressionEvaluationOptions"] = new JObject { ["allowImplicitFuncEval"] = false }
-			}
-		});
+			["stopAtEntry"] = false,
+			["suppressJITOptimizations"] = true,
+			["enableStepFiltering"] = true,
+			["sourceFileMap"] = new Dictionary<string, string> { ["/original/"] = "/mapped/" },
+			["expressionEvaluationOptions"] = new Dictionary<string, bool> { ["allowImplicitFuncEval"] = false }
+		}));
 		host.WithBreakpointsRequest(11, MyClassFile).WithConfigurationDoneRequest().WithOptionalResumeRuntime(debuggee.Id, startSuspended);
 
-		var stopped = await host.WaitForStoppedEvent(events);
+		var stopped = await host.WaitForStoppedEvent();
 		stopped.ThreadId.Should().NotBeNull();
 	}
 
@@ -194,24 +181,18 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task Evaluate_ShowRawValues_SuppressesDebuggerDisplay()
 	{
 		var startSuspended = true;
-		var (host, initializedEventTcs, events, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
+		var (host, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
 		using var adapterScope = adapter;
 		using var killer = new ProcessKiller(debuggee);
 		using var hostScope = host;
 
-		await host.WithInitializeRequest().WaitForInitializedEvent(initializedEventTcs);
-		host.SendRequestSync(new AttachRequest
+		await host.WithInitializeRequest().WaitForInitializedEvent();
+		host.SendRequestSync(AttachWithOptions(debuggee.Id, new()
 		{
-			ConfigurationProperties = new Dictionary<string, JToken>
-			{
-				["name"] = "AttachRequestName",
-				["type"] = "coreclr",
-				["processId"] = debuggee.Id,
-				["expressionEvaluationOptions"] = new JObject { ["showRawValues"] = true }
-			}
-		});
+			["expressionEvaluationOptions"] = new Dictionary<string, bool> { ["showRawValues"] = true }
+		}));
 		host.WithBreakpointsRequest(11, MyClassFile).WithConfigurationDoneRequest().WithOptionalResumeRuntime(debuggee.Id, startSuspended);
-		var stopped = await host.WaitForStoppedEvent(events);
+		var stopped = await host.WaitForStoppedEvent();
 		host.WithStackTraceRequest(stopped.ThreadId!.Value, out var trace);
 
 		host.WithEvaluateRequest(trace.StackFrames!.First().Id, "_classWithDebugDisplay", out var response);
@@ -235,7 +216,7 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		session.Frame.Source.Should().NotBeNull();
 		session.Frame.Source!.SourceReference.Should().BeGreaterThan(0, "the debuggee PDB embeds its sources (EmbedAllSources)");
 
-		var source = session.Host.SendRequestSync(new SourceRequest { SourceReference = session.Frame.Source.SourceReference!.Value });
+		var source = session.Host.SendRequestSync(new SourceArguments { SourceReference = session.Frame.Source.SourceReference!.Value });
 		source.Content.Should().Contain("embeddedMarker");
 	}
 
@@ -243,9 +224,9 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	public async Task SourceLink_MapsSourceToRepositoryUrl()
 	{
 		using var session = await StopInAsync(EmbeddedSourceFile, 16, "EmbeddedSourceApp");
-		var response = session.Host.SendRequestSync(new SourceLinkRequest(EmbeddedSourceFile));
+		var response = session.Host.SendRequestSync(new SourceLinkArguments { Path = EmbeddedSourceFile });
 		response.Url.Should().NotBeNullOrEmpty("the debuggee PDB carries a SourceLink document");
-		response.Url.Should().Contain("lextudio/SharpDbg");
+		response.Url.Should().Contain("lextudio/sharpdbg", "SourceLink maps to the repository URL (case-insensitive on GitHub)");
 		response.Url.Should().EndWith("Program.cs");
 	}
 
@@ -307,10 +288,10 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		using var session = await StopInAsync(MyClassFile, 11);
 		session.Host.WithScopesRequest(session.Frame.Id, out var scopes);
 		var reference = scopes.Scopes.Single().VariablesReference;
-		var all = session.Host.SendRequestSync(new VariablesRequest { VariablesReference = reference }).Variables;
+		var all = session.Host.SendRequestSync(new VariablesArguments { VariablesReference = reference }).Variables;
 		all.Count.Should().BeGreaterThan(1);
 
-		var paged = session.Host.SendRequestSync(new VariablesRequest { VariablesReference = reference, Start = 1, Count = 1 }).Variables;
+		var paged = session.Host.SendRequestSync(new VariablesArguments { VariablesReference = reference, Start = 1, Count = 1 }).Variables;
 		paged.Should().HaveCount(1);
 		paged[0].Name.Should().Be(all[1].Name);
 	}
@@ -410,22 +391,19 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	[Fact]
 	public async Task NoDebug_Launch_RunsToCompletionWithoutStopping()
 	{
-		var launch = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
-		using var adapterScope = launch.Adapter;
-		using var hostScope = launch.Host;
-		var host = launch.Host;
-		var exitedTcs = new TaskCompletionSource<ExitedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-		host.RegisterEventType<ExitedEvent>(e => exitedTcs.TrySetResult(e));
+		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
+		using var adapterScope = adapter;
+		using var hostScope = host;
 		var program = Path.JoinFromGitRoot("artifacts", "bin", "TopLevelStatementsConsoleApp", "debug", "TopLevelStatementsConsoleApp.dll");
 
 		await host
 			.WithInitializeRequest()
 			.WithLaunchRequest(program, stopAtEntry: true, justMyCode: true, noDebug: true)
-			.WaitForInitializedEvent(launch.InitializedEventTcs);
+			.WaitForInitializedEvent();
 		host.WithConfigurationDoneRequest();
 
 		// Run Without Debugging: the process runs to completion and reports its exit code, with no stop.
-		var exited = await exitedTcs.Task.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+		var exited = await host.WaitForEvent<ExitedEvent>(timeout: TimeSpan.FromSeconds(60));
 		exited.ExitCode.Should().Be(0);
 	}
 
@@ -439,16 +417,16 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		using var _ = adapter;
 		using var host = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper);
 		host.Run();
-		host.SendRequestSync(DebugAdapterProcessHelper.GetInitializeRequest());
+		host.WithInitializeRequest();
 		action(host);
 	}
 
 	// Overloads that keep each request's concrete type so SendRequestSync can infer its response.
-	static void AssertSupported(DebugProtocolHost host, string requestType, LoadedSourcesRequest request) =>
+	static void AssertSupported(DebugProtocolHost host, string requestType, LoadedSourcesArguments request) =>
 		AssertNoUnsupportedReply(host, requestType, () => host.SendRequestSync(request));
-	static void AssertSupported(DebugProtocolHost host, string requestType, BreakpointLocationsRequest request) =>
+	static void AssertSupported(DebugProtocolHost host, string requestType, BreakpointLocationsArguments request) =>
 		AssertNoUnsupportedReply(host, requestType, () => host.SendRequestSync(request));
-	static void AssertSupported(DebugProtocolHost host, string requestType, SourceRequest request) =>
+	static void AssertSupported(DebugProtocolHost host, string requestType, SourceArguments request) =>
 		AssertNoUnsupportedReply(host, requestType, () => host.SendRequestSync(request));
 
 	static void AssertNoUnsupportedReply(DebugProtocolHost host, string requestType, Action send)
@@ -466,23 +444,31 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		return response!.Result;
 	}
 
+	static AttachArguments AttachWithOptions(int processId, Dictionary<string, object?> options)
+	{
+		var request = DebugAdapterProcessHelper.GetAttachRequest(processId);
+		foreach (var (key, value) in options)
+			request.AdditionalProperties![key] = JsonSerializer.SerializeToElement(value);
+		return request;
+	}
+
 	async Task<Session> StopInAsync(string file, int line, string appName = "DebuggableConsoleApp")
 	{
 		var startSuspended = true;
-		var (host, initializedEventTcs, events, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHostInProc(testOutputHelper, startSuspended, appName);
+		var (host, adapter, debuggee) = TestHelper.GetRunningDebugProtocolHostInProc(testOutputHelper, startSuspended, appName);
 		try
 		{
 			await host
 				.WithInitializeRequest()
 				.WithAttachRequest(debuggee.Id)
-				.WaitForInitializedEvent(initializedEventTcs);
+				.WaitForInitializedEvent();
 			host
 				.WithBreakpointsRequest(line, file)
 				.WithConfigurationDoneRequest()
 				.WithOptionalResumeRuntime(debuggee.Id, startSuspended);
-			var stopped = await host.WaitForStoppedEvent(events);
+			var stopped = await host.WaitForStoppedEvent();
 			host.WithStackTraceRequest(stopped.ThreadId!.Value, out var stackTraceResponse);
-			return new Session(host, adapter, debuggee, events, stopped.ThreadId!.Value, stackTraceResponse.StackFrames!.First());
+			return new Session(host, adapter, debuggee, stopped.ThreadId!.Value, stackTraceResponse.StackFrames!.First());
 		}
 		catch
 		{
@@ -496,11 +482,10 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		}
 	}
 
-	sealed class Session(DisposableDebugProtocolHost host, IDisposable adapter, Process debuggee, TcsContainer events, int threadId, StackFrame frame) : IDisposable
+	sealed class Session(DebugProtocolHost host, IDisposable adapter, Process debuggee, int threadId, StackFrame frame) : IDisposable
 	{
 		readonly ProcessKiller killer = new(debuggee);
-		public DisposableDebugProtocolHost Host { get; } = host;
-		public TcsContainer Events { get; } = events;
+		public DebugProtocolHost Host { get; } = host;
 		public int ThreadId { get; } = threadId;
 		public StackFrame Frame { get; } = frame;
 		public void Dispose()
@@ -513,4 +498,21 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 			adapter.Dispose();
 		}
 	}
+}
+
+/// <summary>A SharpDbg-specific request: the SourceLink URL for a source path.</summary>
+public sealed record SourceLinkArguments : IDapRequest<SourceLinkResponse>, IDapNamedMessage
+{
+	public const string CommandName = "sourceLink";
+	static string IDapNamedMessage.MessageName => CommandName;
+	string IDapRequest.Command => CommandName;
+
+	[JsonPropertyName("path")]
+	public string Path { get; init; } = "";
+}
+
+public sealed record SourceLinkResponse
+{
+	[JsonPropertyName("url")]
+	public string? Url { get; init; }
 }

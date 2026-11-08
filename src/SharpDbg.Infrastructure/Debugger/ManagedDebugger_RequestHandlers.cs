@@ -839,7 +839,9 @@ public partial class ManagedDebugger
 		if (frame is not ICorDebugILFrame ilFrame)
 			throw new InvalidOperationException("The active frame is not an IL frame.");
 		var module = _modules[ilFrame.Function.Module.BaseAddress];
-		var resolved = module.MetadataReader.ResolveBreakpoint(filePath, line, column)
+		var document = module.MetadataReader.FindDocument(filePath)
+			?? throw new InvalidOperationException($"No source document for {filePath}.");
+		var resolved = module.MetadataReader.ResolveBreakpoint(document, line, column)
 			?? throw new InvalidOperationException($"No statement at {filePath}:{line}.");
 		if (resolved.MethodToken != ilFrame.Function.Token)
 			throw new InvalidOperationException("The target statement is not in the active frame's method.");

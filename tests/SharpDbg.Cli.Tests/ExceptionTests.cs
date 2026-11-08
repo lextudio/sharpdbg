@@ -424,8 +424,8 @@ file static class ExceptionDetailsAssertions
 	public static void ShouldHaveVisualStudioExceptionDetails(this ExceptionDetails? details, string formattedDescription, int hResult, string source)
 	{
 		var additionalProperties = details!.AdditionalProperties!;
-		additionalProperties["formattedDescription"]!.GetValue<string>().Should().Be(formattedDescription);
-		additionalProperties["hresult"]!.GetValue<int>().Should().Be(hResult);
-		additionalProperties["source"]!.GetValue<string>().Should().Be(source);
+		additionalProperties["formattedDescription"].GetString().Should().Be(formattedDescription);
+		additionalProperties["hresult"].GetInt32().Should().Be(hResult);
+		additionalProperties["source"].GetString().Should().Be(source);
 	}
 }

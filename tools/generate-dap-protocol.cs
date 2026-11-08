@@ -1,4 +1,3 @@
-#!/usr/bin/env dotnet
 // Generates the Debug Adapter Protocol message types in src/SharpDbg.DapProtocol/Generated from the pinned
 // debugAdapterProtocol.json schema (https://github.com/microsoft/debug-adapter-protocol, MIT licensed).
 // Usage: dotnet run tools/generate-dap-protocol.cs
@@ -20,7 +19,7 @@ Directory.CreateDirectory(outputDir);
 foreach (var existing in Directory.GetFiles(outputDir, "*.g.cs")) File.Delete(existing);
 foreach (var (fileName, content) in generator.Files)
 {
-	File.WriteAllText(Path.Combine(outputDir, fileName), content.ReplaceLineEndings("\n"));
+	File.WriteAllText(Path.Combine(outputDir, fileName), content.ReplaceLineEndings("\n").TrimEnd('\n') + "\n");
 	Console.WriteLine($"Wrote {fileName}");
 }
 
@@ -209,7 +208,10 @@ sealed class Generator(JsonObject definitions)
 
 		sb.AppendLine("\t/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>");
 		sb.AppendLine("\t[JsonExtensionData]");
-		sb.AppendLine("\tpublic JsonObject? AdditionalProperties { get; set; }");
+		// A Dictionary, not a JsonObject: net10's System.Text.Json writes a JsonObject extension-data value as
+		// an unnamed nested object ({"Name":"n",{"processId":123}}), which is invalid JSON and breaks launch/attach
+		// options. The desktop adapter targets net10.0, so the generated shape must work there; net11 handles both.
+		sb.AppendLine("\tpublic Dictionary<string, JsonElement>? AdditionalProperties { get; set; }");
 
 		if (nested.Length > 0)
 		{

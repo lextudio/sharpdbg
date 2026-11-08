@@ -30,7 +30,7 @@ public sealed partial record InitializedEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -92,7 +92,7 @@ public sealed partial record StoppedEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The reason for the event.
@@ -170,7 +170,7 @@ public sealed partial record ContinuedEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -189,7 +189,7 @@ public sealed partial record ExitedEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -209,7 +209,7 @@ public sealed partial record TerminatedEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -234,7 +234,7 @@ public sealed partial record ThreadEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The reason for the event.
@@ -329,7 +329,7 @@ public sealed partial record OutputEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The output category. If not specified or if the category is not understood by the client, `console` is assumed.
@@ -416,7 +416,7 @@ public sealed partial record BreakpointEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The reason for the event.
@@ -467,7 +467,7 @@ public sealed partial record ModuleEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The reason for the event.
@@ -518,7 +518,7 @@ public sealed partial record LoadedSourceEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// The reason for the event.
@@ -587,7 +587,7 @@ public sealed partial record ProcessEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 
 	/// <summary>
 	/// Describes how the debug engine started debugging this process.
@@ -635,7 +635,7 @@ public sealed partial record CapabilitiesEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -690,7 +690,7 @@ public sealed partial record ProgressStartEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -723,7 +723,7 @@ public sealed partial record ProgressUpdateEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -749,7 +749,7 @@ public sealed partial record ProgressEndEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -782,7 +782,7 @@ public sealed partial record InvalidatedEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -815,6 +815,5 @@ public sealed partial record MemoryEvent : IDapEvent, IDapNamedMessage
 
 	/// <summary>Properties not described by the protocol specification, e.g. adapter-specific launch configuration.</summary>
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
-

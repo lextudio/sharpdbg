@@ -46,6 +46,30 @@ public sealed class AndroidDapServerTests
         Assert.True(readyCalls >= 1);
     }
 
+    [Fact]
+    public async Task Initialize_SendsInitializedEventAfterTheResponse()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+        using var accepted = await listener.AcceptTcpClientAsync();
+        using var stream = client.GetStream();
+        var server = new AndroidDapServer(accepted.GetStream(), "secret", Path.GetTempPath(), () => throw new InvalidOperationException("not attached"), () => { });
+        Task running = server.RunAsync();
+
+        var response = await Request(stream, 1, "initialize", new JsonObject());
+        Assert.True((bool?)response["success"]);
+        // DAP requires the initialized event after the initialize response; the IDE waits for it before
+        // sending setBreakpoints/configurationDone.
+        var initialized = await Read(stream);
+        Assert.Equal("event", (string?)initialized["type"]);
+        Assert.Equal("initialized", (string?)initialized["event"]);
+
+        client.Close();
+        await running.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
