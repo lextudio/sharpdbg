@@ -10,17 +10,15 @@ name: Publish OpenDevelop packages
 # this workflow printed.
 
 on:
-  # workflow_dispatch only reaches a workflow that is on the default branch, and this fork's work
-  # lives on opendevelop-debugger-features until it is merged - so the feature branch also triggers
-  # on push. A published version is only consumed when OpenDevelop's pin moves, so an extra publish
-  # is harmless.
+  # This fork keeps its work on main, which is also where workflow_dispatch can reach it. The
+  # workflow file itself is deliberately not in the path filter: editing the pipeline must not
+  # publish a new package version.
   workflow_dispatch:
   push:
-    branches: [main, opendevelop-debugger-features]
+    branches: [main]
     paths:
       - 'src/**'
       - 'iac/**'
-      - '.github/workflows/publish-opendevelop-packages.yml'
 
 permissions:
   contents: read
