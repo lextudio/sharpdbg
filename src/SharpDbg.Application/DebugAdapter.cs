@@ -39,6 +39,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 	// does not resend breakpoints for a `restart` request, and a relaunched program with none runs to completion.
 	readonly Dictionary<string, SharpDbgBreakpointRequest[]> _sourceBreakpoints = new(StringComparer.Ordinal);
 	SharpDbgFunctionBreakpointRequest[] _functionBreakpoints = [];
+	// The subscription whose events may reach the client; see SubscribeToDebuggerEvents.
+	object? _debuggerEventToken;
 	List<SharpDbgExceptionBreakpointRequest> _exceptionBreakpoints = [];
 
 	/// <summary>The DAP connection, created by <see cref="Initialize"/>.</summary>
@@ -402,6 +404,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		{
 			using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 			{
+				// Before anything touches the old debugger: its exit callbacks must not end the client's session.
+				Volatile.Write(ref _debuggerEventToken, null);
 				await _debugger.DrainRuntimeEventQueue();
 				// A launch restart terminates the old debuggee; an attach restart only detaches.
 				_debugger.Disconnect(_lastLaunchInfo is not null);
@@ -796,9 +800,22 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 
 	void SubscribeToDebuggerEvents()
 	{
+		// A restart replaces the debugger while the old one is still winding down: killing its debuggee raises
+		// exited/terminated on it, which the client would take for the end of the whole session. Each subscription
+		// holds its own token and a restart withdraws the current one before it touches the old debugger, so
+		// nothing the old debugger raises from then on reaches the client (a comparison with the _debugger field
+		// would still let events through while the old one is being disconnected, before the field is replaced).
+		var token = new object();
+		_debuggerEventToken = token;
+		void SendFromCurrentDebugger(string name, JsonObject body)
+		{
+			if (ReferenceEquals(token, Volatile.Read(ref _debuggerEventToken)))
+				SendEvent(name, body);
+		}
+
 		_debugger.OnStopped += (threadId, reason) =>
 		{
-			SendEvent("stopped", new JsonObject
+			SendFromCurrentDebugger("stopped", new JsonObject
 			{
 				["reason"] = ConvertStopReason(reason),
 				["threadId"] = threadId,
@@ -808,7 +825,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 
 		_debugger.OnStopped2 += (threadId, filePath, line, column, reason, hitBreakpointIds) =>
 		{
-			SendEvent("stopped", new JsonObject
+			SendFromCurrentDebugger("stopped", new JsonObject
 			{
 				["reason"] = ConvertStopReason(reason),
 				["threadId"] = threadId,
@@ -822,7 +839,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 
 		_debugger.OnBreakpointChanged += breakpoint =>
 		{
-			SendEvent("breakpoint", new JsonObject
+			SendFromCurrentDebugger("breakpoint", new JsonObject
 			{
 				["reason"] = "changed",
 				["breakpoint"] = new JsonObject
@@ -840,47 +857,47 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			});
 		};
 
-		_debugger.OnContinued += threadId => SendEvent("continued", new JsonObject
+		_debugger.OnContinued += threadId => SendFromCurrentDebugger("continued", new JsonObject
 		{
 			["threadId"] = threadId,
 			["allThreadsContinued"] = true
 		});
 
 		// exitCode will be null in the attach scenario, as we cannot obtain the exit code of the process we attached to
-		_debugger.OnExited += exitCode => SendEvent("exited", new JsonObject { ["exitCode"] = exitCode ?? 0 });
+		_debugger.OnExited += exitCode => SendFromCurrentDebugger("exited", new JsonObject { ["exitCode"] = exitCode ?? 0 });
 
-		_debugger.OnTerminated += () => SendEvent("terminated", new JsonObject());
+		_debugger.OnTerminated += () => SendFromCurrentDebugger("terminated", new JsonObject());
 
-		_debugger.OnThreadStarted += threadId => SendEvent("thread", new JsonObject
+		_debugger.OnThreadStarted += threadId => SendFromCurrentDebugger("thread", new JsonObject
 		{
 			["reason"] = "started",
 			["threadId"] = threadId
 		});
 
-		_debugger.OnThreadExited += threadId => SendEvent("thread", new JsonObject
+		_debugger.OnThreadExited += threadId => SendFromCurrentDebugger("thread", new JsonObject
 		{
 			["reason"] = "exited",
 			["threadId"] = threadId
 		});
 
-		_debugger.OnModuleLoaded += (id, name, path) => SendEvent("module", new JsonObject
+		_debugger.OnModuleLoaded += (id, name, path) => SendFromCurrentDebugger("module", new JsonObject
 		{
 			["reason"] = "new",
 			["module"] = new JsonObject { ["id"] = id, ["name"] = name, ["path"] = path }
 		});
-		_debugger.OnModuleUnloaded += (id, name, path) => SendEvent("module", new JsonObject
+		_debugger.OnModuleUnloaded += (id, name, path) => SendFromCurrentDebugger("module", new JsonObject
 		{
 			["reason"] = "removed",
 			["module"] = new JsonObject { ["id"] = id, ["name"] = name, ["path"] = path }
 		});
 
-		_debugger.OnLoadedSource += (reason, path) => SendEvent("loadedSource", new JsonObject
+		_debugger.OnLoadedSource += (reason, path) => SendFromCurrentDebugger("loadedSource", new JsonObject
 		{
 			["reason"] = reason == "removed" ? "removed" : "new",
 			["source"] = CreateSource(path)
 		});
 
-		_debugger.OnProcessStarted += (processId, name, isAttach) => SendEvent("process", new JsonObject
+		_debugger.OnProcessStarted += (processId, name, isAttach) => SendFromCurrentDebugger("process", new JsonObject
 		{
 			["name"] = name,
 			["systemProcessId"] = processId,
@@ -888,14 +905,14 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			["isLocalProcess"] = true
 		});
 
-		_debugger.OnOutput += (output, isStdError) => SendEvent("output", new JsonObject
+		_debugger.OnOutput += (output, isStdError) => SendFromCurrentDebugger("output", new JsonObject
 		{
 			["category"] = isStdError ? "stderr" : "stdout",
 			["output"] = output
 		});
 
 		// Debugger messages the user should see, e.g. a breakpoint condition that failed to evaluate.
-		_debugger.OnImportantOutput += message => SendEvent("output", new JsonObject
+		_debugger.OnImportantOutput += message => SendFromCurrentDebugger("output", new JsonObject
 		{
 			["category"] = "important",
 			["output"] = message

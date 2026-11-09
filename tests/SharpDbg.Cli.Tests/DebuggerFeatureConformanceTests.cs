@@ -129,6 +129,10 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		// instead of running to completion.
 		var second = await host.WaitForStoppedEvent();
 		second.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
+
+		// Killing the old debuggee must not be reported as the end of the session: a client ends it on `terminated`.
+		host.ReceivedEvents.OfType<TerminatedEvent>().Should().BeEmpty("a restart keeps the session alive");
+		host.ReceivedEvents.OfType<ExitedEvent>().Should().BeEmpty("the old debuggee's exit belongs to the restart, not to the session");
 	}
 
 	[Fact]
