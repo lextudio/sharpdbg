@@ -35,6 +35,11 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 	int? _lastAttachProcessId;
 	string? _lastAttachDebuggerLibraryDirectory;
 	RemoteAttachInfo? _lastRemoteAttachInfo;
+	// What the client last asked for, so a restart (which builds a new debugger) can set it again: the client
+	// does not resend breakpoints for a `restart` request, and a relaunched program with none runs to completion.
+	readonly Dictionary<string, SharpDbgBreakpointRequest[]> _sourceBreakpoints = new(StringComparer.Ordinal);
+	SharpDbgFunctionBreakpointRequest[] _functionBreakpoints = [];
+	List<SharpDbgExceptionBreakpointRequest> _exceptionBreakpoints = [];
 
 	/// <summary>The DAP connection, created by <see cref="Initialize"/>.</summary>
 	public DapConnection Connection { get; private set; } = null!;
@@ -411,6 +416,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 					_debugger.AttachRemote(_lastRemoteAttachInfo, _lastJustMyCode);
 				else
 					throw new InvalidOperationException("There is no launch or attach to restart.");
+				ReapplyBreakpoints();
 				await _debugger.ConfigurationDone();
 			}
 		}
@@ -419,6 +425,17 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			_logger?.Invoke($"HandleRestartRequestAsync failed: {ex.Message} , {ex}");
 			throw new InvalidOperationException($"Failed to restart: {ex.Message}", ex);
 		}
+	}
+
+	/// <summary>Sets the breakpoints the client had before a restart on the new debugger, as the initial setBreakpoints round would.</summary>
+	void ReapplyBreakpoints()
+	{
+		foreach (var (sourcePath, requests) in _sourceBreakpoints)
+			_debugger.SetBreakpoints(sourcePath, requests);
+		if (_functionBreakpoints.Length > 0)
+			_debugger.SetFunctionBreakpoints(_functionBreakpoints);
+		if (_exceptionBreakpoints.Count > 0)
+			_debugger.SetExceptionBreakpoints(_exceptionBreakpoints);
 	}
 
 	JsonObject SetBreakpoints(JsonObject args)
@@ -433,6 +450,10 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				GetString(bp as JsonObject, "logMessage")))
 			.ToArray();
 
+		if (requests.Length == 0)
+			_sourceBreakpoints.Remove(sourcePath);
+		else
+			_sourceBreakpoints[sourcePath] = requests;
 		var breakpoints = _debugger.SetBreakpoints(sourcePath, requests);
 		return new JsonObject
 		{
@@ -458,6 +479,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				GetString(bp as JsonObject, "condition"),
 				GetString(bp as JsonObject, "hitCondition")))
 			.ToArray();
+		_functionBreakpoints = requests;
 		var breakpoints = _debugger.SetFunctionBreakpoints(requests);
 		return new JsonObject
 		{
@@ -480,6 +502,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				ParseExceptionFilter(GetString(option as JsonObject, "filterId")),
 				GetString(option as JsonObject, "condition")));
 		_logger?.Invoke($"Exception breakpoints: {string.Join(", ", requests)}");
+		_exceptionBreakpoints = requests;
 		_debugger.SetExceptionBreakpoints(requests);
 		return new JsonObject();
 	}

@@ -105,6 +105,33 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	}
 
 	[Fact]
+	public async Task Restart_KeepsTheBreakpoints()
+	{
+		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
+		using var _ = adapter;
+		using var __ = host;
+		var program = Path.JoinFromGitRoot("artifacts", "bin", "DebuggableConsoleApp", "debug", "DebuggableConsoleApp.dll");
+
+		await host
+			.WithInitializeRequest()
+			.WithLaunchRequest(program, stopAtEntry: false, justMyCode: true)
+			.WaitForInitializedEvent();
+		host
+			.WithBreakpointsRequest(11, MyClassFile)
+			.WithConfigurationDoneRequest();
+		var first = await host.WaitForStoppedEvent();
+		first.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
+
+		var ex = Record.Exception(() => host.SendRequestSync(new RestartArguments()));
+		ex.Should().BeNull($"restart should relaunch the session; got: {ex?.Message}");
+
+		// The client does not send the breakpoints again for a restart; the relaunched program must still stop at it
+		// instead of running to completion.
+		var second = await host.WaitForStoppedEvent();
+		second.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
+	}
+
+	[Fact]
 	public void Source_IsSupported() => WithInitializedHost(host =>
 		AssertSupported(host, "source", new SourceArguments { Source = new Source { Path = MyClassFile }, SourceReference = 1 }));
 
