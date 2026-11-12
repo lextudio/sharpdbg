@@ -720,6 +720,8 @@ public partial class ManagedDebugger
 	// Not intended to implement IDisposable - it is intended that this is called via Disconnect()
 	private void Dispose()
 	{
+		// A thread waiting for client symbols must not outlive the session
+		CancelSymbolWaiters();
 		if (_process is null) return; // A client may call Terminate, then Disconnect, both of which call Dispose. Dispose only needs to be run once.
 
 		// Dispose modules, which releases PDB files

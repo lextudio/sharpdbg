@@ -32,6 +32,9 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 	// The last launch/attach, replayed by a restart request.
 	LaunchInfo? _lastLaunchInfo;
 	bool _lastJustMyCode = true;
+	// launch/attach 'decompileExternalCode': false hands the decision (and the PDB) for modules without symbols to the client
+	bool _decompileExternalCode = true;
+	TimeSpan _clientSymbolsTimeout = ManagedDebugger.DefaultClientSymbolsTimeout;
 	int? _lastAttachProcessId;
 	string? _lastAttachDebuggerLibraryDirectory;
 	RemoteAttachInfo? _lastRemoteAttachInfo;
@@ -88,7 +91,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		{
 			// SharpDbg-specific commands are not part of the DAP specification, so the connection hands them
 			// over as UnknownRequest with their raw arguments.
-			if (unknown.Command is not ("resolveStackFrame" or "sourceLink" or "vsCustomMessage"))
+			if (unknown.Command is not ("resolveStackFrame" or "sourceLink" or "vsCustomMessage" or "loadSymbols"))
 				return DapResponse.NotSupported(request);
 			var rawArguments = unknown.Arguments is { ValueKind: JsonValueKind.Object } element
 				? (JsonObject)JsonNode.Parse(element.GetRawText())!
@@ -125,6 +128,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		var capabilities = new JsonObject
 		{
 			["supportsConfigurationDoneRequest"] = true,
+			// SharpDbg-specific: launch/attach decompileExternalCode, the symbolsNeeded event and the loadSymbols request
+			["supportsClientSymbols"] = true,
 			["supportsFunctionBreakpoints"] = true,
 			["supportsConditionalBreakpoints"] = true,
 			["supportsHitConditionalBreakpoints"] = true,
@@ -201,6 +206,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 
 		if (command == "disconnect")
 		{
+			// A thread waiting for the client's symbols holds the lock below: release it first, or teardown waits for the timeout
+			_debugger.CancelSymbolWaiters();
 			using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 			{
 				await _debugger.DrainRuntimeEventQueue();
@@ -211,6 +218,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 
 		if (command == "terminate")
 		{
+			_debugger.CancelSymbolWaiters();
 			using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 			{
 				await _debugger.DrainRuntimeEventQueue();
@@ -219,37 +227,66 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			return new JsonObject();
 		}
 
+		// Not under the lock below: the thread that asked for these symbols holds it while it waits for this answer.
+		if (command == "loadSymbols") return LoadSymbols(args);
+
 		using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 		{
-			await _debugger.DrainRuntimeEventQueue();
-			return command switch
-			{
-				"configurationDone" => await ConfigurationDoneAsync(),
-				"setBreakpoints" => SetBreakpoints(args),
-				"setFunctionBreakpoints" => SetFunctionBreakpoints(args),
-				"setExceptionBreakpoints" => SetExceptionBreakpoints(args),
-				"breakpointLocations" => BreakpointLocations(args),
-				"loadedSources" => LoadedSources(),
-				"gotoTargets" => GotoTargets(args),
-				"goto" => await GotoAsync(args),
-				"source" => await SourceAsync(args),
-				"resolveStackFrame" => ResolveStackFrame(args),
-				"sourceLink" => SourceLink(args),
-				"scopes" => Scopes(args),
-				"variables" => await VariablesAsync(args),
-				"evaluate" => await EvaluateAsync(args),
-				"continue" => Continue(args),
-				"next" => await StepAsync(() => _debugger.StepNext(RequiredInt(args, "threadId"))),
-				"stepIn" => await StepAsync(() => _debugger.StepIn(RequiredInt(args, "threadId"))),
-				"stepOut" => await StepAsync(() => _debugger.StepOut(RequiredInt(args, "threadId"))),
-				"pause" => Pause(),
-				"modules" => Modules(),
-				"threads" => Threads(),
-				"stackTrace" => StackTrace(args),
-				"exceptionInfo" => await ExceptionInfoAsync(args),
-				_ => throw new InvalidOperationException($"Request '{command}' is not supported.")
-			};
+			// With client symbols, draining the runtime events and the handlers themselves can wait for the client's symbols (see
+			// loadSymbols). Requests are dispatched one at a time on the connection's dispatch loop until a handler yields, so
+			// work that waits must not run there, or the answer could never be dispatched. The lock is already held, so the order
+			// of requests is unchanged. Without client symbols nothing waits and the path is the one it always was.
+			return _decompileExternalCode
+				? await HandleLockedAsync(command, args)
+				: await Task.Run(() => HandleLockedAsync(command, args));
 		}
+	}
+
+	async Task<JsonObject> HandleLockedAsync(string command, JsonObject args)
+	{
+		await _debugger.DrainRuntimeEventQueue();
+		return command switch
+		{
+			"configurationDone" => await ConfigurationDoneAsync(),
+			"setBreakpoints" => SetBreakpoints(args),
+			"setFunctionBreakpoints" => SetFunctionBreakpoints(args),
+			"setExceptionBreakpoints" => SetExceptionBreakpoints(args),
+			"breakpointLocations" => BreakpointLocations(args),
+			"loadedSources" => LoadedSources(),
+			"gotoTargets" => GotoTargets(args),
+			"goto" => await GotoAsync(args),
+			"source" => await SourceAsync(args),
+			"resolveStackFrame" => ResolveStackFrame(args),
+			"sourceLink" => SourceLink(args),
+			"scopes" => Scopes(args),
+			"variables" => await VariablesAsync(args),
+			"evaluate" => await EvaluateAsync(args),
+			"continue" => Continue(args),
+			"next" => await StepAsync(() => _debugger.StepNext(RequiredInt(args, "threadId"))),
+			"stepIn" => await StepAsync(() => _debugger.StepIn(RequiredInt(args, "threadId"))),
+			"stepOut" => await StepAsync(() => _debugger.StepOut(RequiredInt(args, "threadId"))),
+			"pause" => Pause(),
+			"modules" => Modules(),
+			"threads" => Threads(),
+			"stackTrace" => StackTrace(args),
+			"exceptionInfo" => await ExceptionInfoAsync(args),
+			_ => throw new InvalidOperationException($"Request '{command}' is not supported.")
+		};
+	}
+
+	/// <summary>
+	/// SharpDbg-specific request: the client's answer to a <c>symbolsNeeded</c> event (or symbols it provides up front) for the module
+	/// with the given MVID. <c>pdbPath</c> missing or empty means the client has no symbols for it.
+	/// </summary>
+	JsonObject LoadSymbols(JsonObject args)
+	{
+		var mvidText = GetString(args, "mvid");
+		if (!Guid.TryParse(mvidText, out var mvid))
+			throw new InvalidOperationException("loadSymbols needs the module's 'mvid'");
+		var pdbPath = GetString(args, "pdbPath");
+		_logger?.Invoke($"loadSymbols: {mvid} -> {(string.IsNullOrEmpty(pdbPath) ? "(none)" : pdbPath)}");
+		_debugger.ProvideSymbols(mvid, pdbPath);
+		return new JsonObject { ["accepted"] = true };
 	}
 
 	async Task<JsonObject> ConfigurationDoneAsync()
@@ -272,6 +309,10 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			var env = GetStringDictionary(args, "env") ?? [];
 			var stopAtEntry = GetBool(args, "stopAtEntry") ?? false;
 			var justMyCode = GetBool(args, "justMyCode") ?? true;
+			_decompileExternalCode = GetBool(args, "decompileExternalCode") ?? true;
+			_clientSymbolsTimeout = GetInt(args, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0 ? TimeSpan.FromMilliseconds(timeoutMs) : ManagedDebugger.DefaultClientSymbolsTimeout;
+			_debugger.DecompileExternalCode = _decompileExternalCode;
+			_debugger.ClientSymbolsTimeout = _clientSymbolsTimeout;
 			var console = GetString(args, "console");
 			ApplyExpressionEvaluationOptions(args);
 			var launchRequestConsoleType = console switch
@@ -367,6 +408,10 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				throw new InvalidOperationException("continueStoppedProcess is supported on macOS only");
 
 			var justMyCode = GetBool(args, "justMyCode") ?? true;
+			_decompileExternalCode = GetBool(args, "decompileExternalCode") ?? true;
+			_clientSymbolsTimeout = GetInt(args, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0 ? TimeSpan.FromMilliseconds(timeoutMs) : ManagedDebugger.DefaultClientSymbolsTimeout;
+			_debugger.DecompileExternalCode = _decompileExternalCode;
+			_debugger.ClientSymbolsTimeout = _clientSymbolsTimeout;
 			// enableStepFiltering is the Just My Code step filter under another name.
 			if (GetBool(args, "enableStepFiltering") is bool enableStepFiltering)
 				justMyCode = enableStepFiltering;
@@ -402,6 +447,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 	{
 		try
 		{
+			_debugger.CancelSymbolWaiters();
 			using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 			{
 				// Before anything touches the old debugger: its exit callbacks must not end the client's session.
@@ -878,6 +924,15 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		{
 			["reason"] = "exited",
 			["threadId"] = threadId
+		});
+
+		_debugger.DecompileExternalCode = _decompileExternalCode;
+		_debugger.ClientSymbolsTimeout = _clientSymbolsTimeout;
+		_debugger.OnSymbolsNeeded += (name, path, mvid) => SendFromCurrentDebugger("symbolsNeeded", new JsonObject
+		{
+			["moduleName"] = name,
+			["modulePath"] = path,
+			["mvid"] = mvid.ToString()
 		});
 
 		_debugger.OnModuleLoaded += (id, name, path) => SendFromCurrentDebugger("module", new JsonObject

@@ -56,12 +56,14 @@ public static class DebugAdapterProcessHelper
 		};
 	}
 
-	public static AttachArguments GetAttachRequest(int processId, bool justMyCode = true)
+	public static AttachArguments GetAttachRequest(int processId, bool justMyCode = true, bool decompileExternalCode = true, int? clientSymbolsTimeoutMs = null)
 	{
 		return new AttachArguments
 		{
 			AdditionalProperties = new Dictionary<string, JsonElement>
 			{
+				["decompileExternalCode"] = JsonSerializer.SerializeToElement(decompileExternalCode),
+				["clientSymbolsTimeoutMs"] = JsonSerializer.SerializeToElement(clientSymbolsTimeoutMs ?? 0),
 				["name"] = JsonSerializer.SerializeToElement("AttachRequestName"),
 				["type"] = JsonSerializer.SerializeToElement("coreclr"),
 				["processId"] = JsonSerializer.SerializeToElement(processId),
