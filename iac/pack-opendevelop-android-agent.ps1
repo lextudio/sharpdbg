@@ -46,6 +46,8 @@ if (-not $sdkVersion) { throw 'Building the Android debugger requires a .NET 11 
 $sdkLine = @($versions | Where-Object { $_.StartsWith("$sdkVersion ") }) | Select-Object -First 1
 if ($sdkLine -notmatch '\[(.+)\]') { throw 'Could not determine the .NET SDK root.' }
 $dotnetRoot = Split-Path -Parent $Matches[1]
+$workloadVersion = (& $DotNet workload --version).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $workloadVersion) { throw 'Could not determine the installed .NET workload-set version.' }
 
 if (-not $AndroidSdkDirectory) { $AndroidSdkDirectory = $env:ANDROID_SDK_ROOT }
 if (-not $AndroidSdkDirectory) {
@@ -95,7 +97,10 @@ try {
   </packageSources>
 </configuration>
 "@ | Set-Content -LiteralPath (Join-Path $scratch 'nuget.config') -Encoding utf8
-    @{ sdk = @{ version = $sdkVersion; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
+    # The workflow installs a workload set that can differ from the SDK's bundled manifests. Pin
+    # the scratch build to that same set; otherwise SDK 11 falls back to its bundled manifests and
+    # reports workloads as missing even though they were installed into this dotnet root.
+    @{ sdk = @{ version = $sdkVersion; workloadVersion = $workloadVersion; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
 
     Set-Location $scratch
     $projectFile = Join-Path $scratch 'src/SharpDbg.AndroidAgent/SharpDbg.AndroidAgent.csproj'
