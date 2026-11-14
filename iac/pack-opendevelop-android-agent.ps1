@@ -46,11 +46,6 @@ if (-not $sdkVersion) { throw 'Building the Android debugger requires a .NET 11 
 $sdkLine = @($versions | Where-Object { $_.StartsWith("$sdkVersion ") }) | Select-Object -First 1
 if ($sdkLine -notmatch '\[(.+)\]') { throw 'Could not determine the .NET SDK root.' }
 $dotnetRoot = Split-Path -Parent $Matches[1]
-$workloadVersionLines = @(& $DotNet workload --version)
-if ($LASTEXITCODE -ne 0) { throw 'Could not determine the installed .NET workload-set version.' }
-$workloadVersion = @($workloadVersionLines | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -match '^\d+\.\d+\.\d+(?:[-.][0-9A-Za-z]+)*$' })
-if ($workloadVersion.Count -ne 1) { throw "Could not determine one installed .NET workload-set version from: $($workloadVersionLines -join ' | ')" }
-$workloadVersion = [string]$workloadVersion[0]
 
 if (-not $AndroidSdkDirectory) { $AndroidSdkDirectory = $env:ANDROID_SDK_ROOT }
 if (-not $AndroidSdkDirectory) {
@@ -100,13 +95,15 @@ try {
   </packageSources>
 </configuration>
 "@ | Set-Content -LiteralPath (Join-Path $scratch 'nuget.config') -Encoding utf8
-    # The workflow installs a workload set that can differ from the SDK's bundled manifests. Pin
-    # the scratch build to that same set; otherwise SDK 11 falls back to its bundled manifests and
-    # reports workloads as missing even though they were installed into this dotnet root.
-    @{ sdk = @{ version = $sdkVersion; workloadVersion = $workloadVersion; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
+    @{ sdk = @{ version = $sdkVersion; allowPrerelease = $true; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'global.json') -Encoding utf8
 
     Set-Location $scratch
     $projectFile = Join-Path $scratch 'src/SharpDbg.AndroidAgent/SharpDbg.AndroidAgent.csproj'
+    # Resolve workloads from the scratch project's own global.json. The runner may have installed a
+    # different workload set in another directory; publishing without this restore can select the
+    # SDK's bundled manifests and fail with NETSDK1147 before the first Android agent builds.
+    & $DotNet workload restore $projectFile
+    if ($LASTEXITCODE -ne 0) { throw 'Could not restore the Android debugger workloads.' }
     $packageRoot = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) '.nuget/packages' }
     $stage = Join-Path $scratch 'stage'
     $agentStage = Join-Path $stage 'agent'
