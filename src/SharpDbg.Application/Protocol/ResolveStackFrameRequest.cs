@@ -35,7 +35,7 @@ public sealed record VsCustomMessageArguments : IDapRequest<VsCustomMessageRespo
 	string IDapRequest.Command => "vsCustomMessage";
 
 	[JsonExtensionData]
-	public JsonObject? AdditionalProperties { get; set; }
+	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 public sealed record VsCustomMessageResponse;
@@ -50,7 +50,7 @@ public static class StackFrameExtensions
 		public bool? IsResolved
 		{
 			get => stackFrame.AdditionalProperties?["isResolved"]?.GetValue<bool>();
-			set => SetAdditionalProperty(stackFrame, "isResolved", value);
+			set => SetAdditionalProperty(stackFrame, "isResolved", value is null ? null : JsonValue.Create(value.Value));
 		}
 
 		/// <remarks>Serialized with default (PascalCase) property names, for compatibility with existing clients.</remarks>
@@ -68,6 +68,6 @@ public static class StackFrameExtensions
 			stackFrame.AdditionalProperties?.Remove(name);
 			return;
 		}
-		(stackFrame.AdditionalProperties ??= [])[name] = value;
+		(stackFrame.AdditionalProperties ??= new JsonObject())[name] = value;
 	}
 }

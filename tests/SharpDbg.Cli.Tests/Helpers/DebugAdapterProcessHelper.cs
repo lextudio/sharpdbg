@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using SharpDbg.Infrastructure.Debugger;
@@ -55,34 +56,37 @@ public static class DebugAdapterProcessHelper
 		};
 	}
 
-	public static AttachArguments GetAttachRequest(int processId, bool justMyCode = true)
+	public static AttachArguments GetAttachRequest(int processId, bool justMyCode = true, bool decompileExternalCode = true, int? clientSymbolsTimeoutMs = null)
 	{
 		return new AttachArguments
 		{
 			AdditionalProperties = new JsonObject
 			{
-				["name"] = "AttachRequestName",
-				["type"] = "coreclr",
-				["processId"] = processId,
-				["console"] = "internalConsole", // integratedTerminal, externalTerminal, internalConsole
-				["justMyCode"] = justMyCode
+				["decompileExternalCode"] = JsonSerializer.SerializeToNode(decompileExternalCode),
+				["clientSymbolsTimeoutMs"] = JsonSerializer.SerializeToNode(clientSymbolsTimeoutMs ?? 0),
+				["name"] = JsonSerializer.SerializeToNode("AttachRequestName"),
+				["type"] = JsonSerializer.SerializeToNode("coreclr"),
+				["processId"] = JsonSerializer.SerializeToNode(processId),
+				["console"] = JsonSerializer.SerializeToNode("internalConsole"), // integratedTerminal, externalTerminal, internalConsole
+				["justMyCode"] = JsonSerializer.SerializeToNode(justMyCode)
 			}
 		};
 	}
 
-	public static LaunchArguments GetLaunchRequest(string program, bool stopAtEntry, bool justMyCode = true)
+	public static LaunchArguments GetLaunchRequest(string program, bool stopAtEntry, bool justMyCode = true, bool noDebug = false)
 	{
 		return new LaunchArguments
 		{
 			AdditionalProperties = new JsonObject
 			{
-				["name"] = "LaunchRequestName",
-				["type"] = "coreclr",
-				["program"] = program,
-				["cwd"] = Path.GetDirectoryName(program),
-				["console"] = "internalConsole",
-				["justMyCode"] = justMyCode,
-				["stopAtEntry"] = stopAtEntry
+				["name"] = JsonSerializer.SerializeToNode("LaunchRequestName"),
+				["type"] = JsonSerializer.SerializeToNode("coreclr"),
+				["program"] = JsonSerializer.SerializeToNode(program),
+				["cwd"] = JsonSerializer.SerializeToNode(Path.GetDirectoryName(program)),
+				["console"] = JsonSerializer.SerializeToNode("internalConsole"),
+				["justMyCode"] = JsonSerializer.SerializeToNode(justMyCode),
+				["stopAtEntry"] = JsonSerializer.SerializeToNode(stopAtEntry),
+				["noDebug"] = JsonSerializer.SerializeToNode(noDebug)
 			}
 		};
 	}
@@ -122,7 +126,8 @@ public static class DebugAdapterProcessHelper
 				Line = s.Line,
 				Column = s.Column,
 				Condition = s.Condition,
-				HitCondition = s.HitCondition
+				HitCondition = s.HitCondition,
+				LogMessage = s.LogMessage
 			}).ToList()
 		};
 		return setBreakpointsRequest;

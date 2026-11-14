@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using SharpDbg.Cli.Tests.Helpers;
 using SharpDbg.DapProtocol;
@@ -18,9 +19,9 @@ public static partial class TestHelper
 			var filePath = topFrame.Source.Path!.Replace('/', Path.DirectorySeparatorChar);
 			stoppedEvent.AdditionalProperties = new JsonObject
 			{
-				["source"] = new JsonObject { ["path"] = filePath },
-				["line"] = topFrame.Line,
-				["column"] = topFrame.Column
+				["source"] = JsonSerializer.SerializeToNode(new { path = filePath }),
+				["line"] = JsonSerializer.SerializeToNode(topFrame.Line),
+				["column"] = JsonSerializer.SerializeToNode(topFrame.Column)
 			};
 		}
 	}

@@ -141,6 +141,18 @@ public sealed class DapConnection : IDisposable
 		});
 	}
 
+	/// <summary>Sends an event whose body is written verbatim.</summary>
+	public void SendRawEvent(string name, JsonElement body)
+	{
+		WriteMessage(writer =>
+		{
+			writer.WriteString("type"u8, "event"u8);
+			writer.WriteString("event"u8, name);
+			writer.WritePropertyName("body"u8);
+			body.WriteTo(writer);
+		});
+	}
+
 	/// <summary>Sends a request to the peer and waits for its response.</summary>
 	/// <remarks>Cancelling <paramref name="cancellationToken"/> sends a <c>cancel</c> request to the peer and throws <see cref="OperationCanceledException"/>.</remarks>
 	public async Task<DapResult<TResponse>> SendRequestAsync<TResponse>(IDapRequest<TResponse> request, CancellationToken cancellationToken = default)
@@ -539,7 +551,7 @@ public sealed class DapConnection : IDisposable
 		}
 	}
 
-	private abstract record IncomingMessage;
+	private closed record IncomingMessage;
 	private sealed record IncomingRequest(int Seq, string Command, IDapRequest Request, CancellationTokenSource CancellationSource) : IncomingMessage;
 	private sealed record IncomingEvent(IDapEvent Event, EventSubscription[] Subscriptions) : IncomingMessage;
 

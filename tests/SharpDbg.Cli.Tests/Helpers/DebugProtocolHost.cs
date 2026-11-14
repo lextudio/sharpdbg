@@ -39,6 +39,7 @@ public sealed class DebugProtocolHost : IDisposable
 		RecordEvents<ProgressEndEvent>();
 		RecordEvents<InvalidatedEvent>();
 		RecordEvents<MemoryEvent>();
+		RecordEvents<SharpDbg.Application.Protocol.SymbolsNeededEvent>();
 	}
 
 	public DapConnection Connection => _connection;

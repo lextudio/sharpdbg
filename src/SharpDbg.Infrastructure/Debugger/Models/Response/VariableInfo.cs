@@ -9,4 +9,7 @@ public class VariableInfo
 	public required string? Type { get; set; }
 	public required int VariablesReference { get; set; }
 	public VariablePresentationHint? PresentationHint { get; set; }
+
+	/// <summary>The memory address of the value, for the DAP memoryReference.</summary>
+	public string? MemoryReference { get; set; }
 }

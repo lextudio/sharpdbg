@@ -88,7 +88,8 @@ internal sealed class CompiledEvaluationMethod : IDisposable
 // 🤖
 internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 {
-	private static readonly PortableExecutableReference _intrinsicMethodsReference = MetadataReference.CreateFromImage(CreateIntrinsicMethodsAssembly());
+	private PortableExecutableReference? _intrinsicMethodsReference;
+	private PortableExecutableReference IntrinsicMethodsReference => _intrinsicMethodsReference ??= MetadataReference.CreateFromImage(CreateIntrinsicMethodsAssembly(debugger.GetIntrinsicReferenceAssemblyPath()));
 
 	private const int CacheCapacity = 256;
 	private readonly record struct CompileCacheKey(int ModuleVersion, CompileContextKind ContextKind, CORDB_ADDRESS Module, int Token, int IlOffset, string Expression, bool HasException);
@@ -314,7 +315,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 	{
 		var moduleInfo = debugger.GetModuleInfoForModule(frame.Function.Module);
 		var moduleId = new ModuleId(moduleInfo.MetadataReader.Mvid, moduleInfo.ModuleName);
-		var compilation = AddRuntimeAccessAttributes(blocks.ToCompilation(moduleId: default, MakeAssemblyReferencesKind.AllAssemblies).AddReferences(_intrinsicMethodsReference));
+		var compilation = AddRuntimeAccessAttributes(blocks.ToCompilation(moduleId: default, MakeAssemblyReferencesKind.AllAssemblies).AddReferences(IntrinsicMethodsReference));
 		var methodToken = frame.Function.Token;
 		var methodHandle = (MethodDefinitionHandle)MetadataTokens.Handle(methodToken);
 		var currentSourceMethod = compilation.GetSourceMethod(moduleId, methodHandle);
@@ -357,7 +358,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 		var rootType = rootValue.ExactType;
 		var moduleInfo = debugger.GetModuleInfoForModule(rootType.Class.Module);
 		var moduleId = new ModuleId(moduleInfo.MetadataReader.Mvid, moduleInfo.ModuleName);
-		var compilation = AddRuntimeAccessAttributes(blocks.ToCompilation(moduleId: default, MakeAssemblyReferencesKind.AllAssemblies).AddReferences(_intrinsicMethodsReference));
+		var compilation = AddRuntimeAccessAttributes(blocks.ToCompilation(moduleId: default, MakeAssemblyReferencesKind.AllAssemblies).AddReferences(IntrinsicMethodsReference));
 		var currentType = compilation.GetType(moduleId, rootType.Class.Token);
 		var currentFrame = new SynthesizedContextMethodSymbol(currentType);
 		return new EvaluationContext(
@@ -389,7 +390,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 		return compilation.AddSyntaxTrees(SyntaxFactory.ParseSyntaxTree(source));
 	}
 
-	private static ImmutableArray<byte> CreateIntrinsicMethodsAssembly()
+	private static ImmutableArray<byte> CreateIntrinsicMethodsAssembly(string coreLibraryPath)
 	{
 		const string source = """
 			namespace Microsoft.VisualStudio.Debugger.Clr;
@@ -405,7 +406,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 		var compilation = CSharpCompilation.Create(
 			"SharpDbg.DebuggerIntrinsics",
 			[SyntaxFactory.ParseSyntaxTree(source)],
-			[MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+			[MetadataReference.CreateFromFile(coreLibraryPath)],
 			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 		using var stream = new MemoryStream();
 		var result = compilation.Emit(stream);

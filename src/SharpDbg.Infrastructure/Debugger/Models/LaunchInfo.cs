@@ -8,6 +8,10 @@ public class LaunchInfo
 	public required bool StopAtEntry { get; set; }
 	public required List<string> Arguments { get; set; }
 	public required Dictionary<string, string> Env { get; set; }
+
+	/// <summary>Run Without Debugging: start the process and stream its output, but never attach the
+	/// debugger (no breakpoints, stepping or evaluation).</summary>
+	public bool NoDebug { get; set; }
 }
 
 public class RemoteAttachInfo

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <SelfContained>true</SelfContained>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnablePreviewFeatures>true</EnablePreviewFeatures>
+    <IlcGenerateCompleteTypeMetadata>true</IlcGenerateCompleteTypeMetadata>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Silhouette" Version="4.2.0" />
+    <PackageReference Include="ICorDebugSharp" Version="0.1.8" />
+    <!-- The Android app SDK does not pass transitive dependencies of project references to NativeAOT. -->
+    <PackageReference Include="Ardalis.GuardClauses" Version="5.0.0" />
+    <PackageReference Include="ICSharpCode.Decompiler" Version="11.2.0.10050" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <PackageReference Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.9.0" />
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.750501" />
+    <PackageReference Include="NeoSmart.AsyncLock" Version="3.2.1" />
+    <PackageReference Include="ZLinq" Version="1.6.1" />
+    <ProjectReference Include="../SharpDbg.Infrastructure/SharpDbg.Infrastructure.csproj" />
+    <ProjectReference Include="../SharpDbg.DapProtocol/SharpDbg.DapProtocol.csproj" />
+    <TrimmerRootAssembly Include="SharpDbg.Infrastructure" />
+    <TrimmerRootAssembly Include="Microsoft.CSharp" />
+  </ItemGroup>
+</Project>
