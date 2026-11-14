@@ -46,8 +46,11 @@ if (-not $sdkVersion) { throw 'Building the Android debugger requires a .NET 11 
 $sdkLine = @($versions | Where-Object { $_.StartsWith("$sdkVersion ") }) | Select-Object -First 1
 if ($sdkLine -notmatch '\[(.+)\]') { throw 'Could not determine the .NET SDK root.' }
 $dotnetRoot = Split-Path -Parent $Matches[1]
-$workloadVersion = (& $DotNet workload --version).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $workloadVersion) { throw 'Could not determine the installed .NET workload-set version.' }
+$workloadVersionLines = @(& $DotNet workload --version)
+if ($LASTEXITCODE -ne 0) { throw 'Could not determine the installed .NET workload-set version.' }
+$workloadVersion = @($workloadVersionLines | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -match '^\d+\.\d+\.\d+(?:[-.][0-9A-Za-z]+)*$' })
+if ($workloadVersion.Count -ne 1) { throw "Could not determine one installed .NET workload-set version from: $($workloadVersionLines -join ' | ')" }
+$workloadVersion = [string]$workloadVersion[0]
 
 if (-not $AndroidSdkDirectory) { $AndroidSdkDirectory = $env:ANDROID_SDK_ROOT }
 if (-not $AndroidSdkDirectory) {
