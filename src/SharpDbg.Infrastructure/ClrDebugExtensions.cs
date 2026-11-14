@@ -55,12 +55,10 @@ public static class ClrDebugExtensions
 	/// onStartup runs while the runtime is still blocked at startup - initialize, set the managed handler and DebugActiveProcess there
 	/// debuggerLibraryDirectory, when set, is where dbgshim loads mscordbi and the DAC from instead of the target runtime's directory -
 	/// an iOS simulator app ships simulator-platform copies that a macOS debugger process cannot load
-	/// afterRegistration runs synchronously once the registration is in place; if it throws, the registration is ended and the task faults
-	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false, Action<ICorDebug>? onStartup = null, string? debuggerLibraryDirectory = null,
-		Action? afterRegistration = null)
+	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false, Action<ICorDebug>? onStartup = null,
+		string? debuggerLibraryDirectory = null)
 	{
 		using var registration = RegisterForRuntimeStartup(pid, onStartup, debuggerLibraryDirectory);
-		afterRegistration?.Invoke();
 		if (resumeDiagnosticSuspension) await DiagnosticClientHelper.DiagnosticClientResumeRuntime(pid);
 		return await registration.WaitForCorDebug().ConfigureAwait(false);
 	}

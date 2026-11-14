@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           test -n "${ANDROID_HOME:-}" && test -d "$ANDROID_HOME"
           # Run every dotnet command of this step under the 11.x SDK that setup-dotnet just installed,
-          # whatever else the image carries: this repository's global.json pins 10.0.x and is not found
+          # whatever else the image carries: this repository's global.json pins 11.0.100 and is not found
           # from here, and this pin (found from the working directory) makes that explicit, like the
           # scratch global.json of iac/pack-opendevelop-android-agent.ps1.
           sdk11=$(dotnet --list-sdks | awk '$1 ~ /^11\./ { print $1 }' | sort -V | tail -n 1)

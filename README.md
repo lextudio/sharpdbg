@@ -66,12 +66,12 @@ SharpDbg is organized into three main components:
 
 ## Building From Source
 
-1. Ensure .NET 10 SDK is installed
+1. Ensure .NET 11 SDK is installed
 2. git clone
 3. `dotnet build`
 4. Done!
 
-This will produce the debug adapter executable at `artifacts/bin/SharpDbg.Cli/Debug/net10.0/SharpDbg.Cli.exe`, equivalent to `netcoredbg.exe`
+This will produce the debug adapter executable at `artifacts/bin/SharpDbg.Cli/debug/SharpDbg.Cli`, equivalent to `netcoredbg.exe`
 
 ## Screenshots
 

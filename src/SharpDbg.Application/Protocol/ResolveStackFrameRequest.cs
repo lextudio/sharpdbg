@@ -35,7 +35,7 @@ public sealed record VsCustomMessageArguments : IDapRequest<VsCustomMessageRespo
 	string IDapRequest.Command => "vsCustomMessage";
 
 	[JsonExtensionData]
-	public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
+	public JsonObject? AdditionalProperties { get; set; }
 }
 
 public sealed record VsCustomMessageResponse;

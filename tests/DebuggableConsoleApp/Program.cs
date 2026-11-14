@@ -15,7 +15,7 @@ public static class Program
 		var myAsyncMethodEvalClass = new AsyncMethodEvalClass();
 		var myClassNoMembers = new MyClassNoMembers();
 		var hitConditionClass = new HitConditionClass();
-		var variablesClass = new VariablesClass();var nativeTypesClass = new NativeTypesClass();
+		var variablesClass = new VariablesClass();var nativeTypesClass = new NativeTypesClass(); // two statements on one line: keeps the line numbers the tests assert
 		var columnBreakpointClass = new ColumnBreakpointClass();
 		var exceptionToThrow = ExceptionToThrow.None;
 		while (true)
