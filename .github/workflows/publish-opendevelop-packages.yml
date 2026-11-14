@@ -77,7 +77,11 @@ jobs:
           # present in workload manifests). The same SDK's workload set pins Microsoft.NET.Sdk.Android to
           # 37.2.0-rc.2.84 from the 11.0.100-rc.2 band, which has all three NativeAOT packs; --skip-manifest-update
           # would keep the incomplete bundled manifest.
-          dotnet workload install android
+          # SDK 11's stable Android workload resolution imports the macOS workload manifest as
+          # well; without it `dotnet publish net11.0-android` stops with NETSDK1147 before the
+          # first NativeAOT agent is built. Install both into this SDK root so the scratch build
+          # in pack-opendevelop-android-agent.ps1 sees the same workload set.
+          dotnet workload install android macos
           # Fail here, not eight minutes later in the publish loop, if a future SDK's manifest again omits an ABI.
           dotnetRoot=$(dirname "$(readlink -f "$(command -v dotnet)")")
           compgen -G "$dotnetRoot/packs/Microsoft.Android.Runtime.NativeAOT.*.android-arm" >/dev/null || {
