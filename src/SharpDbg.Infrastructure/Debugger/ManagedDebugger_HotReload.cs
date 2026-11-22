@@ -13,12 +13,34 @@ public partial class ManagedDebugger
 
 	/// <summary>
 	/// Applies an Edit-and-Continue delta (as produced by Roslyn's EmitDifference) to a loaded module through
-	/// ICorDebugModule2::ApplyChanges. The debuggee must be stopped.
+	/// ICorDebugModule2::ApplyChanges. A running debuggee is synchronized for the update and resumed afterwards
+	/// without a stopped event, so Hot Reload works while the application runs under the debugger.
 	/// </summary>
 	public DeltaApplyResult ApplyDelta(Guid moduleMvid, byte[] metadataDelta, byte[] ilDelta, byte[]? pdbDelta = null, IReadOnlyList<int>? updatedMethodTokens = null)
 	{
 		if (CorProcess is null) return new DeltaApplyResult(false, "There is no process to apply a delta to");
-		if (_run is not RunState.Stopped) return new DeltaApplyResult(false, "The debuggee must be stopped to apply a delta");
+		if (_run is RunState.Stopped) return ApplyDeltaWhileStopped(moduleMvid, metadataDelta, ilDelta, pdbDelta, updatedMethodTokens);
+
+		// ICorDebugController::Stop/Continue nest: this pair synchronizes the process for ApplyChanges and lets it
+		// run on, raising no debugger events, so the client's view (running) stays true throughout.
+		if (CorProcess.TryIsRunning(out var isRunning) is not Cor.S_OK || !isRunning)
+			return new DeltaApplyResult(false, "The debuggee is neither stopped nor running");
+		var stop = CorProcess.TryStop(0);
+		if (stop is not Cor.S_OK) return new DeltaApplyResult(false, $"Could not synchronize the debuggee for the update (0x{stop:X8})", stop);
+		try
+		{
+			return ApplyDeltaWhileStopped(moduleMvid, metadataDelta, ilDelta, pdbDelta, updatedMethodTokens);
+		}
+		finally
+		{
+			var resume = CorProcess.TryContinue(false);
+			if (resume is not Cor.S_OK) _logger?.Invoke($"Error resuming the debuggee after a delta: 0x{resume:X8}");
+		}
+	}
+
+	private DeltaApplyResult ApplyDeltaWhileStopped(Guid moduleMvid, byte[] metadataDelta, byte[] ilDelta, byte[]? pdbDelta, IReadOnlyList<int>? updatedMethodTokens)
+	{
+		if (CorProcess is null) return new DeltaApplyResult(false, "There is no process to apply a delta to");
 
 		var module = _modules.Values.FirstOrDefault(m => m.MetadataReader.Mvid == moduleMvid);
 		if (module is null) return new DeltaApplyResult(false, $"No loaded module has MVID {moduleMvid}");
