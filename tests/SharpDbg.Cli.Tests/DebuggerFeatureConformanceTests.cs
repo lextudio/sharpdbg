@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using AwesomeAssertions;
 using SharpDbg.Cli.Tests.Helpers;
+using SharpDbg.Application;
 using SharpDbg.DapProtocol;
 using SharpDbg.Infrastructure.Debugger;
 using SharpDbg.InMemory;
@@ -102,6 +104,47 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 		// The restarted session stops at entry again.
 		var second = await host.WaitForStoppedEvent();
 		second.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
+	}
+
+	[Fact]
+	public async Task Restart_PreservesEditAndContinueLaunchOption()
+	{
+		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
+		using var _ = adapter;
+		using var __ = host;
+		var program = Path.JoinFromGitRoot("artifacts", "bin", "DebuggableConsoleApp", "debug", "DebuggableConsoleApp.dll");
+		var launch = DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry: true, justMyCode: true);
+		launch.AdditionalProperties!["enableEditAndContinue"] = JsonSerializer.SerializeToNode(true);
+		launch.AdditionalProperties["env"] = new JsonObject { ["DOTNET_MODIFIABLE_ASSEMBLIES"] = "debug" };
+
+		host.WithInitializeRequest();
+		host.SendRequestSync(launch);
+		await host.WaitForInitializedEvent();
+		var debugAdapter = ((InMemoryDebugAdapterDisposable)adapter).DebugAdapter;
+		debugAdapter.IsEditAndContinueEnabled.Should().BeTrue();
+		var originalGeneration = debugAdapter.DebuggerGeneration;
+
+		host.SendRequest(new RestartArguments());
+		debugAdapter.DebuggerGeneration.Should().BeGreaterThan(originalGeneration, "restart constructs a replacement debugger");
+		debugAdapter.IsEditAndContinueEnabled.Should().BeTrue("the replacement debugger must retain the DAP launch option");
+	}
+
+	[Fact]
+	public async Task Attach_ClearsEditAndContinueLaunchOption()
+	{
+		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
+		using var _ = adapter;
+		using var __ = host;
+		var launch = DebugAdapterProcessHelper.GetLaunchRequest("not-started.dll", stopAtEntry: true, justMyCode: true);
+		launch.AdditionalProperties!["enableEditAndContinue"] = JsonSerializer.SerializeToNode(true);
+		host.WithInitializeRequest();
+		host.SendRequestSync(launch);
+		await host.WaitForInitializedEvent();
+		var debugAdapter = ((InMemoryDebugAdapterDisposable)adapter).DebugAdapter;
+		debugAdapter.IsEditAndContinueEnabled.Should().BeTrue();
+
+		host.SendRequest(DebugAdapterProcessHelper.GetAttachRequest(-1)).Value.Should().BeOfType<DapError>();
+		debugAdapter.IsEditAndContinueEnabled.Should().BeFalse("an attach must not inherit a prior launch's EnC opt-in");
 	}
 
 	[Fact]

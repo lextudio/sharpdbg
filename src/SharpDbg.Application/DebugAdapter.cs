@@ -22,6 +22,7 @@ namespace SharpDbg.Application;
 public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 {
 	ManagedDebugger _debugger;
+	int _debuggerGeneration = 1;
 	readonly Action<string>? _logger;
 	bool _clientLinesStartAt1 = true;
 	bool _clientColumnsStartAt1 = true;
@@ -32,6 +33,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 	// The last launch/attach, replayed by a restart request.
 	LaunchInfo? _lastLaunchInfo;
 	bool _lastJustMyCode = true;
+	bool _enableEditAndContinue;
 	// launch/attach 'decompileExternalCode': false hands the decision (and the PDB) for modules without symbols to the client
 	bool _decompileExternalCode = true;
 	TimeSpan _clientSymbolsTimeout = ManagedDebugger.DefaultClientSymbolsTimeout;
@@ -48,6 +50,12 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 
 	/// <summary>The DAP connection, created by <see cref="Initialize"/>.</summary>
 	public DapConnection Connection { get; private set; } = null!;
+
+	/// <summary>Whether the active debugger was opted into Edit and Continue at launch.</summary>
+	public bool IsEditAndContinueEnabled => _debugger.EnableEditAndContinue;
+
+	/// <summary>Monotonically increases whenever a restart constructs a replacement debugger.</summary>
+	public int DebuggerGeneration => _debuggerGeneration;
 
 	/// <summary>
 	/// Raised once the debug session has ended (a disconnect request has been fully handled).
@@ -91,7 +99,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		{
 			// SharpDbg-specific commands are not part of the DAP specification, so the connection hands them
 			// over as UnknownRequest with their raw arguments.
-			if (unknown.Command is not ("resolveStackFrame" or "sourceLink" or "vsCustomMessage" or "loadSymbols"))
+			if (unknown.Command is not ("resolveStackFrame" or "sourceLink" or "vsCustomMessage" or "loadSymbols" or "sharpdbg/applyDeltas"))
 				return DapResponse.NotSupported(request);
 			var rawArguments = unknown.Arguments is { ValueKind: JsonValueKind.Object } element
 				? (JsonObject)JsonNode.Parse(element.GetRawText())!
@@ -258,6 +266,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			"source" => await SourceAsync(args),
 			"resolveStackFrame" => ResolveStackFrame(args),
 			"sourceLink" => SourceLink(args),
+			"sharpdbg/applyDeltas" => ApplyDeltas(args),
 			"scopes" => Scopes(args),
 			"variables" => await VariablesAsync(args),
 			"evaluate" => await EvaluateAsync(args),
@@ -272,6 +281,25 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			"exceptionInfo" => await ExceptionInfoAsync(args),
 			_ => throw new InvalidOperationException($"Request '{command}' is not supported.")
 		};
+	}
+
+	JsonObject ApplyDeltas(JsonObject args)
+	{
+		if (!Guid.TryParse(GetString(args, "mvid"), out var mvid))
+			throw new InvalidOperationException("sharpdbg/applyDeltas needs a valid mvid");
+		byte[] Decode(string name) {
+			var value = GetString(args, name);
+			if (string.IsNullOrWhiteSpace(value)) throw new InvalidOperationException($"sharpdbg/applyDeltas needs {name}");
+			try { return Convert.FromBase64String(value); }
+			catch (FormatException ex) { throw new InvalidOperationException($"sharpdbg/applyDeltas has invalid {name}", ex); }
+		}
+		var metadata = Decode("metadata");
+		var il = Decode("il");
+		if (!_debugger.EnableEditAndContinue)
+			throw new InvalidOperationException("sharpdbg/applyDeltas requires enableEditAndContinue at launch");
+		var result = _debugger.ApplyDelta(mvid, metadata, il);
+		if (!result.Success) throw new InvalidOperationException(result.Message);
+		return new JsonObject { ["applied"] = true, ["message"] = result.Message, ["hresult"] = result.HResult };
 	}
 
 	/// <summary>
@@ -309,6 +337,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			var env = GetStringDictionary(args, "env") ?? [];
 			var stopAtEntry = GetBool(args, "stopAtEntry") ?? false;
 			var justMyCode = GetBool(args, "justMyCode") ?? true;
+			_enableEditAndContinue = GetBool(args, "enableEditAndContinue") ?? false;
+			_debugger.EnableEditAndContinue = _enableEditAndContinue;
 			_decompileExternalCode = GetBool(args, "decompileExternalCode") ?? true;
 			_clientSymbolsTimeout = GetInt(args, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0 ? TimeSpan.FromMilliseconds(timeoutMs) : ManagedDebugger.DefaultClientSymbolsTimeout;
 			_debugger.DecompileExternalCode = _decompileExternalCode;
@@ -408,6 +438,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				throw new InvalidOperationException("continueStoppedProcess is supported on macOS only");
 
 			var justMyCode = GetBool(args, "justMyCode") ?? true;
+			_enableEditAndContinue = false;
+			_debugger.EnableEditAndContinue = false;
 			_decompileExternalCode = GetBool(args, "decompileExternalCode") ?? true;
 			_clientSymbolsTimeout = GetInt(args, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0 ? TimeSpan.FromMilliseconds(timeoutMs) : ManagedDebugger.DefaultClientSymbolsTimeout;
 			_debugger.DecompileExternalCode = _decompileExternalCode;
@@ -456,6 +488,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				// A launch restart terminates the old debuggee; an attach restart only detaches.
 				_debugger.Disconnect(_lastLaunchInfo is not null);
 				_debugger = new ManagedDebugger(_logger);
+				_debuggerGeneration++;
+				_debugger.EnableEditAndContinue = _enableEditAndContinue;
 				SubscribeToDebuggerEvents();
 				if (_lastLaunchInfo is not null)
 					_debugger.Launch(_lastLaunchInfo, _lastJustMyCode);

@@ -51,6 +51,8 @@ public class InMemoryDebugAdapterDisposable(
 
 	private readonly DebugAdapter _debugAdapter = debugAdapter;
 
+	public DebugAdapter DebugAdapter => _debugAdapter;
+
 	public void Dispose()
 	{
 		GC.SuppressFinalize(this);
