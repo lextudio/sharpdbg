@@ -136,4 +136,98 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 			try { Directory.Delete(dir, true); } catch { }
 		}
 	}
+
+	/// <summary>Hot Reload under the debugger: the application keeps running and the delta reaches it.</summary>
+	[Fact]
+	public async Task ApplyDelta_WhileRunning_TakesEffectWithoutAStop()
+	{
+		const string loop = """
+			using System;
+			using System.Threading;
+			public static class Target { public static string Get() { return "VERSION"; } }
+			public static class Program
+			{
+			    public static int Main()
+			    {
+			        Console.WriteLine("ready");
+			        for (var i = 0; i < 600; i++)
+			        {
+			            if (Target.Get() == "v2") { Console.WriteLine("saw=v2"); return 0; }
+			            Thread.Sleep(50);
+			        }
+			        return 1;
+			    }
+			}
+			""";
+		var dir = Path.Combine(Path.GetTempPath(), "sharpdbg-enc-run-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(dir);
+		try
+		{
+			var tpa = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+			var refs = tpa.Where(p => Path.GetFileName(p) is "System.Private.CoreLib.dll" or "System.Runtime.dll" or "System.Console.dll" or "netstandard.dll" or "System.Threading.Thread.dll" or "System.Threading.dll")
+				.Select(p => MetadataReference.CreateFromFile(p)).ToArray();
+			var sourcePath = Path.Combine(dir, "Program.cs");
+			CSharpCompilation Make(string v) => CSharpCompilation.Create("enc_running",
+				[CSharpSyntaxTree.ParseText(SourceText.From(loop.Replace("VERSION", v), Encoding.UTF8), path: sourcePath)], refs,
+				new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Debug));
+			var v1 = Make("v1");
+			var pe = new MemoryStream();
+			var pdb = new MemoryStream();
+			var pdbPath = Path.Combine(dir, "enc_running.pdb");
+			v1.Emit(pe, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb, pdbFilePath: pdbPath)).Success.Should().BeTrue();
+			var dll = Path.Combine(dir, "enc_running.dll");
+			File.WriteAllBytes(dll, pe.ToArray());
+			File.WriteAllBytes(pdbPath, pdb.ToArray());
+			File.WriteAllText(Path.Combine(dir, "enc_running.runtimeconfig.json"),
+				"""{"runtimeOptions":{"tfm":"netMAJOR.0","framework":{"name":"Microsoft.NETCore.App","version":"MAJOR.0.0"}}}"""
+					.Replace("MAJOR", Environment.Version.Major.ToString()));
+			var metadata = ModuleMetadata.CreateFromImage(pe.ToArray());
+			var reader = metadata.GetMetadataReader();
+			var mvid = reader.GetGuid(reader.GetModuleDefinition().Mvid);
+			var baseline = EmitBaseline.CreateInitialBaseline(v1, metadata,
+				_ => EditAndContinueMethodDebugInformation.Create(ImmutableArray<byte>.Empty, ImmutableArray<byte>.Empty),
+				_ => default(StandaloneSignatureHandle), hasPortableDebugInformation: true);
+			var v2 = Make("v2");
+			var edit = new SemanticEdit(SemanticEditKind.Update,
+				v1.GetTypeByMetadataName("Target")!.GetMembers("Get")[0], v2.GetTypeByMetadataName("Target")!.GetMembers("Get")[0]);
+			var mdDelta = new MemoryStream();
+			var ilDelta = new MemoryStream();
+			var pdbDelta = new MemoryStream();
+			var diff = v2.EmitDifference(baseline, [edit], _ => false, mdDelta, ilDelta, pdbDelta);
+			diff.Success.Should().BeTrue();
+
+			var output = new StringBuilder();
+			var ready = new TaskCompletionSource();
+			var exited = new TaskCompletionSource();
+			var stops = 0;
+			var debugger = new ManagedDebugger(m => testOutputHelper.WriteLine(m)) { EnableEditAndContinue = true };
+			debugger.OnStopped += (_, _) => Interlocked.Increment(ref stops);
+			debugger.OnStopped2 += (_, _, _, _, _, _) => Interlocked.Increment(ref stops);
+			debugger.OnOutput += (s, _) => { lock (output) { output.Append(s); if (output.ToString().Contains("ready")) ready.TrySetResult(); } };
+			debugger.OnExited += _ => exited.TrySetResult();
+			debugger.OnTerminated += () => exited.TrySetResult();
+			debugger.Launch(new LaunchInfo
+			{
+				LaunchRequestConsoleType = LaunchRequestConsoleType.InternalConsole, Cwd = dir,
+				Program = DotnetHost, StopAtEntry = false, Arguments = [dll], Env = new Dictionary<string, string>(),
+			}, justMyCode: false);
+			await debugger.ConfigurationDone();
+			(await Task.WhenAny(ready.Task, Task.Delay(30000))).Should().BeSameAs(ready.Task);
+
+			var result = debugger.ApplyDelta(mvid, mdDelta.ToArray(), ilDelta.ToArray(), pdbDelta.ToArray(),
+				diff.UpdatedMethods.Select(method => MetadataTokens.GetToken(method)).ToArray());
+			result.Success.Should().BeTrue(result.Message);
+
+			(await Task.WhenAny(exited.Task, Task.Delay(30000))).Should().BeSameAs(exited.Task);
+			try { debugger.Disconnect(true); } catch { }
+			string text;
+			lock (output) text = output.ToString();
+			text.Should().Contain("saw=v2");
+			stops.Should().Be(0);
+		}
+		finally
+		{
+			try { Directory.Delete(dir, true); } catch { }
+		}
+	}
 }
