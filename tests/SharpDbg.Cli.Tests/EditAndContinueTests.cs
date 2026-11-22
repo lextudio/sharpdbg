@@ -1,0 +1,107 @@
+using System.Collections.Immutable;
+using System.Reflection.Metadata;
+using System.Text;
+using AwesomeAssertions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
+using Microsoft.CodeAnalysis.Text;
+using SharpDbg.Infrastructure.Debugger;
+using SharpDbg.Infrastructure.Debugger.Models;
+
+namespace SharpDbg.Cli.Tests;
+
+public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
+{
+	private static string Source(string version) => """
+		using System;
+		using System.Diagnostics;
+		public static class Target { public static string Get() { return "VERSION"; } }
+		public static class Program
+		{
+		    public static int Main()
+		    {
+		        Console.WriteLine("first=" + Target.Get());
+		        Debugger.Break();
+		        Console.WriteLine("second=" + Target.Get());
+		        return 0;
+		    }
+		}
+		""".Replace("VERSION", version);
+
+	// <dotnet root>/shared/Microsoft.NETCore.App/<version>/ -> <dotnet root>/dotnet
+	private static string DotnetHost => Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", "..", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet"));
+
+	[Fact]
+	public async Task ApplyDelta_MethodBodyEdit_TakesEffectAfterResume()
+	{
+		var dir = Path.Combine(Path.GetTempPath(), "sharpdbg-enc-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(dir);
+		try
+		{
+			var tpa = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+			var refs = tpa.Where(p => Path.GetFileName(p) is "System.Private.CoreLib.dll" or "System.Runtime.dll" or "System.Console.dll" or "netstandard.dll" or "System.Diagnostics.Debug.dll")
+				.Select(p => MetadataReference.CreateFromFile(p)).ToArray();
+			var sourcePath = Path.Combine(dir, "Program.cs");
+			CSharpCompilation Make(string v) => CSharpCompilation.Create("enc_target",
+				[CSharpSyntaxTree.ParseText(SourceText.From(Source(v), Encoding.UTF8), path: sourcePath)], refs,
+				new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Debug));
+
+			var v1 = Make("v1");
+			var pe = new MemoryStream();
+			var pdb = new MemoryStream();
+			var pdbPath = Path.Combine(dir, "enc_target.pdb");
+			v1.Emit(pe, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb, pdbFilePath: pdbPath)).Success.Should().BeTrue();
+			var dll = Path.Combine(dir, "enc_target.dll");
+			File.WriteAllBytes(dll, pe.ToArray());
+			File.WriteAllBytes(pdbPath, pdb.ToArray());
+			File.WriteAllText(Path.Combine(dir, "enc_target.runtimeconfig.json"),
+				"""{"runtimeOptions":{"tfm":"net11.0","framework":{"name":"Microsoft.NETCore.App","version":"11.0.0"}}}""");
+
+			var metadata = ModuleMetadata.CreateFromImage(pe.ToArray());
+			var reader = metadata.GetMetadataReader();
+			var mvid = reader.GetGuid(reader.GetModuleDefinition().Mvid);
+			var baseline = EmitBaseline.CreateInitialBaseline(v1, metadata,
+				_ => EditAndContinueMethodDebugInformation.Create(ImmutableArray<byte>.Empty, ImmutableArray<byte>.Empty),
+				_ => default(StandaloneSignatureHandle), hasPortableDebugInformation: true);
+			var v2 = Make("v2");
+			var edit = new SemanticEdit(SemanticEditKind.Update,
+				v1.GetTypeByMetadataName("Target")!.GetMembers("Get")[0], v2.GetTypeByMetadataName("Target")!.GetMembers("Get")[0]);
+			var mdDelta = new MemoryStream();
+			var ilDelta = new MemoryStream();
+			var diff = v2.EmitDifference(baseline, [edit], _ => false, mdDelta, ilDelta, new MemoryStream());
+			diff.Success.Should().BeTrue();
+
+			var output = new StringBuilder();
+			var stopped = new TaskCompletionSource<int>();
+			var exited = new TaskCompletionSource();
+			var debugger = new ManagedDebugger(m => testOutputHelper.WriteLine(m)) { EnableEditAndContinue = true };
+			debugger.OnStopped += (tid, _) => stopped.TrySetResult(tid);
+			debugger.OnStopped2 += (tid, _, _, _, _, _) => stopped.TrySetResult(tid);
+			debugger.OnOutput += (s, _) => { lock (output) output.Append(s); };
+			debugger.OnExited += _ => exited.TrySetResult();
+			debugger.OnTerminated += () => exited.TrySetResult();
+			debugger.Launch(new LaunchInfo
+			{
+				LaunchRequestConsoleType = LaunchRequestConsoleType.InternalConsole, Cwd = dir,
+				Program = DotnetHost, StopAtEntry = false, Arguments = [dll], Env = new Dictionary<string, string>(),
+			}, justMyCode: false);
+			await debugger.ConfigurationDone();
+
+			(await Task.WhenAny(stopped.Task, Task.Delay(30000))).Should().BeSameAs(stopped.Task);
+			var result = debugger.ApplyDelta(mvid, mdDelta.ToArray(), ilDelta.ToArray());
+			result.Success.Should().BeTrue(result.Message);
+
+			debugger.HandleContinueRequest(stopped.Task.Result);
+			await Task.WhenAny(exited.Task, Task.Delay(15000));
+			try { debugger.Disconnect(true); } catch { }
+			string text;
+			lock (output) text = output.ToString();
+			text.Should().Contain("first=v1").And.Contain("second=v2");
+		}
+		finally
+		{
+			try { Directory.Delete(dir, true); } catch { }
+		}
+	}
+}

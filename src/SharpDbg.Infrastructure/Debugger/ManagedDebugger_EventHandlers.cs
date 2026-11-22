@@ -139,6 +139,11 @@ public partial class ManagedDebugger
 
 		// EnC is enabled for assemblies/projects that are authored by the user, so we can use it as a heuristic to determine if this is user code or system code.
 		var isUserCode = corModule.JITCompilerFlags is CorDebugJITCompilerFlags.CORDEBUG_JIT_DISABLE_OPTIMIZATION or CorDebugJITCompilerFlags.CORDEBUG_JIT_ENABLE_ENC;
+		if (EnableEditAndContinue && isUserCode && metadataReader.HasSymbols)
+		{
+			var encHr = corModule.TrySetJITCompilerFlags(CorDebugJITCompilerFlags.CORDEBUG_JIT_ENABLE_ENC);
+			_logger?.Invoke($"  SetJITCompilerFlags(ENABLE_ENC) = 0x{encHr:X8}");
+		}
 		if (_justMyCode && isUserCode && metadataReader.HasSymbols)
 		{
 			// JMC Status starts as false
