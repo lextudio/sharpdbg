@@ -16,6 +16,11 @@ public partial class ModuleMetadataReader : IDisposable
 	private readonly MetadataReader _peMetadataReader;
 	private MetadataReaderProvider? _pdbProvider;
 	private MetadataReader? _pdbMetadataReader;
+	// Portable PDB deltas describe only the changed rows. Keep their providers alive and overlay their
+	// MethodDebugInformation rows on the original PDB instead of replacing the baseline reader.
+	private readonly List<MetadataReaderProvider> _pdbDeltaProviders = [];
+	private readonly List<MetadataReader> _pdbDeltaReaders = [];
+	private readonly Dictionary<int, (MetadataReader Reader, MethodDebugInformation DebugInfo)> _updatedMethodDebugInfo = [];
 	internal MetadataReader PeMetadataReader => _peMetadataReader;
 	internal MetadataReader? PdbMetadataReader => _pdbMetadataReader;
 	private Guid? _mvid;
@@ -236,12 +241,83 @@ public partial class ModuleMetadataReader : IDisposable
 		_pdbMetadataReader = reader;
 	}
 
+	/// <summary>
+	/// Adds a portable-PDB EnC delta to the symbol view. A portable-PDB delta's EncMap names aggregate
+	/// <see cref="HandleKind.MethodDebugInformation"/> rows, while the delta table itself is dense; map
+	/// each EncMap entry to its ordinal in that table before replacing the corresponding method view.
+	/// </summary>
+	public bool TryApplyPdbDelta(byte[] pdbDelta, IReadOnlyList<int> updatedMethodTokens, out string? error)
+	{
+		error = null;
+		if (pdbDelta.Length == 0 || updatedMethodTokens.Count == 0) return true;
+		if (_pdbMetadataReader is null)
+		{
+			error = "The module has no baseline portable PDB.";
+			return false;
+		}
+
+		MetadataReaderProvider? provider = null;
+		try
+		{
+			provider = MetadataReaderProvider.FromPortablePdbImage(ImmutableArray.Create(pdbDelta));
+			var deltaReader = provider.GetMetadataReader();
+			var methodDebugInformationRows = 0;
+			var mappedMethods = new Dictionary<int, MethodDebugInformation>();
+			foreach (var mappedHandle in deltaReader.GetEditAndContinueMapEntries())
+			{
+				if (mappedHandle.Kind is not HandleKind.MethodDebugInformation) continue;
+				methodDebugInformationRows++;
+				var methodToken = unchecked((int)0x06000000) | MetadataTokens.GetRowNumber(mappedHandle);
+				var deltaHandle = MetadataTokens.MethodDebugInformationHandle(methodDebugInformationRows);
+				mappedMethods[methodToken] = deltaReader.GetMethodDebugInformation(deltaHandle);
+			}
+			var replacements = new Dictionary<int, (MetadataReader Reader, MethodDebugInformation DebugInfo)>();
+			foreach (var methodToken in updatedMethodTokens.Distinct())
+			{
+				if (!mappedMethods.TryGetValue(methodToken, out var debugInfo))
+					throw new BadImageFormatException($"The PDB delta does not contain method 0x{methodToken:X8}.");
+				replacements[methodToken] = (deltaReader, debugInfo);
+			}
+
+			_pdbDeltaProviders.Add(provider);
+			_pdbDeltaReaders.Add(deltaReader);
+			foreach (var (methodToken, debugInfo) in replacements) _updatedMethodDebugInfo[methodToken] = debugInfo;
+			provider = null;
+			return true;
+		}
+		catch (Exception ex) when (ex is BadImageFormatException or ArgumentException)
+		{
+			error = ex.Message;
+			return false;
+		}
+		finally
+		{
+			provider?.Dispose();
+		}
+	}
+
+	private bool TryGetMethodDebugInformation(int methodToken, out MetadataReader reader, out MethodDebugInformation debugInfo)
+	{
+		if (_updatedMethodDebugInfo.TryGetValue(methodToken, out var updated))
+		{
+			reader = updated.Reader;
+			debugInfo = updated.DebugInfo;
+			return true;
+		}
+		if (_pdbMetadataReader is null)
+		{
+			reader = null!;
+			debugInfo = default;
+			return false;
+		}
+		reader = _pdbMetadataReader;
+		debugInfo = reader.GetMethodDebugInformation(MetadataTokens.MethodDefinitionHandle(methodToken));
+		return true;
+	}
+
 	public (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? GetSourceLocationForOffset(int methodToken, int ilOffset)
 	{
-		var reader = _pdbMetadataReader;
-		if (reader is null) return null;
-		var methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-		var methodDebugInfo = reader.GetMethodDebugInformation(methodHandle);
+		if (!TryGetMethodDebugInformation(methodToken, out var reader, out var methodDebugInfo)) return null;
 
 		var sequencePoint = GetSequencePointForOffset(methodToken, ilOffset, skipHidden: true);
 
@@ -263,10 +339,7 @@ public partial class ModuleMetadataReader : IDisposable
 
 	private SequencePoint? GetSequencePointForOffset(int methodToken, int ilOffset, bool skipHidden = false)
 	{
-		var reader = _pdbMetadataReader;
-		if (reader is null) return null;
-		var methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-		var methodDebugInfo = reader.GetMethodDebugInformation(methodHandle);
+		if (!TryGetMethodDebugInformation(methodToken, out _, out var methodDebugInfo)) return null;
 		if (methodDebugInfo.SequencePointsBlob.IsNil) return null;
 
 		// PDB sequence points are ordered by offset; retain the last eligible point at or before the IP.
@@ -283,10 +356,7 @@ public partial class ModuleMetadataReader : IDisposable
 
 	internal ResolvedBreakpoint? ResolveBreakpointAtMethodEntry(int methodToken)
 	{
-		var reader = _pdbMetadataReader;
-		if (reader is null) return null;
-		var methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-		var methodDebugInfo = reader.GetMethodDebugInformation(methodHandle);
+		if (!TryGetMethodDebugInformation(methodToken, out var reader, out var methodDebugInfo)) return null;
 		if (methodDebugInfo.SequencePointsBlob.IsNil) return null;
 		SequencePoint? sequencePoint = null;
 		foreach (var candidate in methodDebugInfo.GetSequencePoints())
@@ -606,6 +676,7 @@ public partial class ModuleMetadataReader : IDisposable
 
 	public void Dispose()
 	{
+		foreach (var provider in _pdbDeltaProviders) provider.Dispose();
 		_pdbProvider?.Dispose();
 		_peReader.Dispose();
 	}
