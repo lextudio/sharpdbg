@@ -438,8 +438,8 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				throw new InvalidOperationException("continueStoppedProcess is supported on macOS only");
 
 			var justMyCode = GetBool(args, "justMyCode") ?? true;
-			_enableEditAndContinue = false;
-			_debugger.EnableEditAndContinue = false;
+			_enableEditAndContinue = GetBool(args, "enableEditAndContinue") ?? false;
+			_debugger.EnableEditAndContinue = _enableEditAndContinue;
 			_decompileExternalCode = GetBool(args, "decompileExternalCode") ?? true;
 			_clientSymbolsTimeout = GetInt(args, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0 ? TimeSpan.FromMilliseconds(timeoutMs) : ManagedDebugger.DefaultClientSymbolsTimeout;
 			_debugger.DecompileExternalCode = _decompileExternalCode;

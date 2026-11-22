@@ -148,6 +148,19 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	}
 
 	[Fact]
+	public async Task Attach_EnablesExplicitEditAndContinueOption()
+	{
+		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
+		using var _ = adapter;
+		using var __ = host;
+		host.WithInitializeRequest();
+		var attach = DebugAdapterProcessHelper.GetAttachRequest(-1);
+		attach.AdditionalProperties!["enableEditAndContinue"] = JsonSerializer.SerializeToNode(true);
+		host.SendRequestSync(attach);
+		((InMemoryDebugAdapterDisposable)adapter).DebugAdapter.IsEditAndContinueEnabled.Should().BeTrue();
+	}
+
+	[Fact]
 	public async Task Restart_KeepsTheBreakpoints()
 	{
 		var (host, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
