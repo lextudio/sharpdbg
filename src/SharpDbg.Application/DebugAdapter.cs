@@ -295,9 +295,15 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		}
 		var metadata = Decode("metadata");
 		var il = Decode("il");
+		var pdb = string.IsNullOrWhiteSpace(GetString(args, "pdb")) ? Array.Empty<byte>() : Decode("pdb");
+		var updatedMethodTokens = (args["updatedMethodTokens"] as JsonArray ?? new JsonArray())
+			.Select(token => token?.GetValue<int>() ?? 0)
+			.ToArray();
+		if (updatedMethodTokens.Any(token => (token & unchecked((int)0xFF000000)) != 0x06000000 || (token & 0x00FFFFFF) == 0))
+			throw new InvalidOperationException("sharpdbg/applyDeltas has an invalid updatedMethodTokens entry");
 		if (!_debugger.EnableEditAndContinue)
 			throw new InvalidOperationException("sharpdbg/applyDeltas requires enableEditAndContinue at launch");
-		var result = _debugger.ApplyDelta(mvid, metadata, il);
+		var result = _debugger.ApplyDelta(mvid, metadata, il, pdb, updatedMethodTokens);
 		if (!result.Success) throw new InvalidOperationException(result.Message);
 		return new JsonObject { ["applied"] = true, ["message"] = result.Message, ["hresult"] = result.HResult };
 	}

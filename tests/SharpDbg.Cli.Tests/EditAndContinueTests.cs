@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Text;
 using AwesomeAssertions;
 using Microsoft.CodeAnalysis;
@@ -13,10 +14,16 @@ namespace SharpDbg.Cli.Tests;
 
 public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 {
-	private static string Source(string version) => """
+	private static string Source(string version, int padding = 0) => """
 		using System;
 		using System.Diagnostics;
-		public static class Target { public static string Get() { return "VERSION"; } }
+		public static class Target
+		{
+		    public static string Get()
+		    {
+		        PADDINGreturn "VERSION";
+		    }
+		}
 		public static class Program
 		{
 		    public static int Main()
@@ -27,7 +34,7 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 		        return 0;
 		    }
 		}
-		""".Replace("VERSION", version);
+		""".Replace("VERSION", version).Replace("PADDING", new string('\n', padding));
 
 	// <dotnet root>/shared/Microsoft.NETCore.App/<version>/ -> <dotnet root>/dotnet
 	private static string DotnetHost => Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", "..", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet"));
@@ -43,8 +50,8 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 			var refs = tpa.Where(p => Path.GetFileName(p) is "System.Private.CoreLib.dll" or "System.Runtime.dll" or "System.Console.dll" or "netstandard.dll" or "System.Diagnostics.Debug.dll")
 				.Select(p => MetadataReference.CreateFromFile(p)).ToArray();
 			var sourcePath = Path.Combine(dir, "Program.cs");
-			CSharpCompilation Make(string v) => CSharpCompilation.Create("enc_target",
-				[CSharpSyntaxTree.ParseText(SourceText.From(Source(v), Encoding.UTF8), path: sourcePath)], refs,
+			CSharpCompilation Make(string v, int padding = 0) => CSharpCompilation.Create("enc_target",
+				[CSharpSyntaxTree.ParseText(SourceText.From(Source(v, padding), Encoding.UTF8), path: sourcePath)], refs,
 				new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Debug));
 
 			var v1 = Make("v1");
@@ -64,13 +71,26 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 			var baseline = EmitBaseline.CreateInitialBaseline(v1, metadata,
 				_ => EditAndContinueMethodDebugInformation.Create(ImmutableArray<byte>.Empty, ImmutableArray<byte>.Empty),
 				_ => default(StandaloneSignatureHandle), hasPortableDebugInformation: true);
-			var v2 = Make("v2");
+			var v2 = Make("v2", padding: 3);
 			var edit = new SemanticEdit(SemanticEditKind.Update,
 				v1.GetTypeByMetadataName("Target")!.GetMembers("Get")[0], v2.GetTypeByMetadataName("Target")!.GetMembers("Get")[0]);
 			var mdDelta = new MemoryStream();
 			var ilDelta = new MemoryStream();
-			var diff = v2.EmitDifference(baseline, [edit], _ => false, mdDelta, ilDelta, new MemoryStream());
+			var pdbDelta = new MemoryStream();
+			var diff = v2.EmitDifference(baseline, [edit], _ => false, mdDelta, ilDelta, pdbDelta);
 			diff.Success.Should().BeTrue();
+			var updatedMethodTokens = diff.UpdatedMethods.Select(method => MetadataTokens.GetToken(method)).ToArray();
+			int sourceBreakpointLine;
+			using (var symbols = ModuleMetadataReader.TryLoad(dll))
+			{
+				symbols.Should().NotBeNull();
+				var baselineLocation = symbols!.GetSourceLocationForOffset(updatedMethodTokens.Single(), 1);
+				sourceBreakpointLine = baselineLocation!.Value.startLine;
+				symbols!.TryApplyPdbDelta(pdbDelta.ToArray(), updatedMethodTokens, out var pdbError).Should().BeTrue(pdbError);
+				var updatedLocation = symbols.GetSourceLocationForOffset(updatedMethodTokens.Single(), 1);
+				updatedLocation.Should().NotBeNull();
+				updatedLocation!.Value.startLine.Should().Be(sourceBreakpointLine + 3);
+			}
 
 			var output = new StringBuilder();
 			var stopped = new TaskCompletionSource<int>();
@@ -89,8 +109,20 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 			await debugger.ConfigurationDone();
 
 			(await Task.WhenAny(stopped.Task, Task.Delay(30000))).Should().BeSameAs(stopped.Task);
-			var result = debugger.ApplyDelta(mvid, mdDelta.ToArray(), ilDelta.ToArray());
+			var sourceBreakpoint = debugger.SetBreakpoints(sourcePath, [new SharpDbgBreakpointRequest(sourceBreakpointLine)]).Single();
+			sourceBreakpoint.Verified.Should().BeTrue();
+			var rebindEvents = 0;
+			debugger.OnBreakpointChanged += (changed, _) =>
+			{
+				if (changed.Id == sourceBreakpoint.Id) rebindEvents++;
+			};
+			var result = debugger.ApplyDelta(mvid, mdDelta.ToArray(), ilDelta.ToArray(), pdbDelta.ToArray(), updatedMethodTokens);
 			result.Success.Should().BeTrue(result.Message);
+			result.Message.Should().Contain("updated symbols");
+			sourceBreakpoint.Verified.Should().BeTrue();
+			sourceBreakpoint.Line.Should().Be(sourceBreakpointLine + 3);
+			rebindEvents.Should().BeGreaterThan(0);
+			debugger.RemoveBreakpoint(sourceBreakpoint.Id).Should().BeTrue();
 
 			debugger.HandleContinueRequest(stopped.Task.Result);
 			await Task.WhenAny(exited.Task, Task.Delay(15000));

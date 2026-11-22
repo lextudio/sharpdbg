@@ -37,7 +37,7 @@ public partial class ModuleMetadataReader
 			var isExact = isRelative is false && matchingComponents == requestedComponents.Count && matchingComponents == documentComponents.Count;
 			// A relative path names its folders, all of which must match: '../wrong_folder/Program.cs' is not 'folder/Program.cs'
 			if (isRelative && matchingComponents < requestedComponents.Count) continue;
-			var match = new SourceDocumentMatch(handle, isExact, matchingComponents, documentPath.Length);
+			var match = new SourceDocumentMatch(handle, documentPath, isExact, matchingComponents, documentPath.Length);
 			if (best is null || match.IsBetterThan(best.Value)) best = match;
 		}
 		return best;
@@ -47,12 +47,16 @@ public partial class ModuleMetadataReader
 	{
 		var reader = _pdbMetadataReader;
 		if (reader is null) return null;
-		var documentHandle = document.Handle;
-
 		var candidates = reader.MethodDebugInformation
-			.Select(h => CollectCandidate(h, documentHandle, line, column))
+			.Where(h => _updatedMethodDebugInfo.ContainsKey(MetadataTokens.GetToken(h.ToDefinitionHandle())) is false)
+			.Select(h => CollectCandidate(reader, MetadataTokens.GetToken(h.ToDefinitionHandle()), reader.GetMethodDebugInformation(h), document.DocumentPath, line, column))
 			.OfType<MethodCandidate>()
 			.ToList();
+		foreach (var (methodToken, updated) in _updatedMethodDebugInfo)
+		{
+			var candidate = CollectCandidate(updated.Reader, methodToken, updated.DebugInfo, document.DocumentPath, line, column);
+			if (candidate is not null) candidates.Add(candidate);
+		}
 
 		var covering = candidates.Where(c => c.CoversLine).ToList();
 
@@ -95,10 +99,8 @@ public partial class ModuleMetadataReader
 		return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
 	}
 
-	private MethodCandidate? CollectCandidate(MethodDebugInformationHandle handle, DocumentHandle docHandle, int line, int? column)
+	private static MethodCandidate? CollectCandidate(MetadataReader reader, int methodToken, MethodDebugInformation info, string documentPath, int line, int? column)
 	{
-		var reader = _pdbMetadataReader ?? throw new InvalidOperationException("No symbols are loaded.");
-		var info = reader.GetMethodDebugInformation(handle);
 		if (info.SequencePointsBlob.IsNil) return null;
 
 		SequencePoint? firstSP = null;
@@ -110,9 +112,10 @@ public partial class ModuleMetadataReader
 		{
 			if (sp.IsHidden) continue;
 			var spDoc = sp.Document.IsNil ? info.Document : sp.Document;
-			if (spDoc != docHandle || sp.IsBeforeRequestedPosition(line, column)) continue;
+			var candidateDocumentPath = reader.GetString(reader.GetDocument(spDoc).Name);
+			if (SameDocumentPath(candidateDocumentPath, documentPath) is false || sp.IsBeforeRequestedPosition(line, column)) continue;
 
-			docPath ??= reader.GetString(reader.GetDocument(spDoc).Name);
+			docPath ??= candidateDocumentPath;
 
 			if (firstSP is null || sp.End() < firstSP.Value.End()) firstSP = sp;
 			if (lastSP is null || sp.End() > lastSP.Value.End()) lastSP = sp;
@@ -122,8 +125,11 @@ public partial class ModuleMetadataReader
 		}
 
 		if (firstSP is null) return null;
-		return new MethodCandidate(MetadataTokens.GetToken(handle.ToDefinitionHandle()), firstSP.Value, lastSP!.Value, coveringSP, docPath!);
+		return new MethodCandidate(methodToken, firstSP.Value, lastSP!.Value, coveringSP, docPath!);
 	}
+
+	private static bool SameDocumentPath(string left, string right) =>
+		string.Equals(left, right, OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 	private static ResolvedBreakpoint NewResolvedBreakpoint(int token, SequencePoint sp, string docPath) =>
 		new(token, sp.Offset, sp.StartLine, sp.EndLine, sp.StartColumn, sp.EndColumn, docPath);
 
@@ -270,7 +276,7 @@ public partial class ModuleMetadataReader
 /// How well a PDB document matches the path a breakpoint was set with. The exact path wins; otherwise the document whose
 /// path ends in the most of the requested path's components, e.g. a PDB built elsewhere ('/_/src/Program.cs') still matches
 /// 'C:/repo/src/Program.cs', and over '/_/src/folder/Program.cs'. Equally good matches go to the shortest path.
-public readonly record struct SourceDocumentMatch(DocumentHandle Handle, bool IsExact, int MatchingComponents, int PathLength)
+public readonly record struct SourceDocumentMatch(DocumentHandle Handle, string DocumentPath, bool IsExact, int MatchingComponents, int PathLength)
 {
 	private static readonly StringComparison PathComparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 

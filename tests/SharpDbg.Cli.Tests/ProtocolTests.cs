@@ -41,6 +41,9 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
 		var invalidIl = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "not-base64" });
 		invalidIl.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("invalid il");
 
+		var invalidUpdatedMethod = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==", UpdatedMethodTokens = [0x02000001] });
+		invalidUpdatedMethod.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("invalid updatedMethodTokens");
+
 		var notOptedIn = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==" });
 		notOptedIn.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("enableEditAndContinue");
 
@@ -62,6 +65,7 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
 		public string Mvid { get; init; } = "";
 		public string Metadata { get; init; } = "";
 		public string Il { get; init; } = "";
+		public int[]? UpdatedMethodTokens { get; init; }
 	}
 	private sealed record ApplyDeltasResponse;
 }
