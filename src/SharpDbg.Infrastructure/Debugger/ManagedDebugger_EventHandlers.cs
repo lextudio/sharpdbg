@@ -143,6 +143,7 @@ public partial class ManagedDebugger
 
 		var moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode);
 		_modules[baseAddress] = moduleInfo;
+		ForgetRemapPlans(baseAddress);
 		ModuleSet_Version++;
 		TryBindEntryBreakpoint(moduleInfo);
 
@@ -176,6 +177,7 @@ public partial class ManagedDebugger
 	{
 		var corModule = unloadModuleEvent.Module;
 		var baseAddress = corModule.BaseAddress;
+		ForgetRemapPlans(baseAddress);
 		if (_modules.Remove(baseAddress, out var moduleInfo) is false)
 		{
 			Continue();
