@@ -33,6 +33,16 @@ public partial class ManagedDebugger
 	private readonly Dictionary<(CORDB_ADDRESS Module, int Token), ActiveFrameRemapPlan> _remapPlans = new();
 
 	/// <summary>
+	/// A plan belongs to one loaded module. Function versions restart at 1 in a module loaded at the same address later,
+	/// so a plan left behind could match a new module's first delta, which may carry no line maps at all.
+	/// </summary>
+	private void ForgetRemapPlans(CORDB_ADDRESS moduleBaseAddress)
+	{
+		foreach (var key in _remapPlans.Keys.Where(key => key.Module == moduleBaseAddress).ToList())
+			_remapPlans.Remove(key);
+	}
+
+	/// <summary>
 	/// Applies an Edit-and-Continue delta (as produced by Roslyn's EmitDifference) to a loaded module through
 	/// ICorDebugModule2::ApplyChanges. A running debuggee is synchronized for the update and resumed afterwards
 	/// without a stopped event, so Hot Reload works while the application runs under the debugger.

@@ -50,6 +50,11 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
 		var lineMapsNotAnArray = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==", LineMaps = "x" });
 		lineMapsNotAnArray.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("invalid lineMaps");
 
+		// Well-formed lineMaps pass validation: the request then fails on the missing debuggee, not on the argument.
+		var wellFormedLineMaps = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==",
+			LineMaps = new[] { new { documentPath = "/src/Program.cs", unchangedLines = new[] { new { oldStartLine = 3, newStartLine = 5, lineCount = 2 } } } } });
+		wellFormedLineMaps.Value.Should().BeOfType<DapError>().Which.Message.Should().NotContain("lineMaps");
+
 		var notOptedIn = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==" });
 		notOptedIn.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("enableEditAndContinue");
 

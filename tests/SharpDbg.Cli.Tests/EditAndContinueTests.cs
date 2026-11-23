@@ -232,8 +232,9 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 	}
 
 	/// <summary>
-	/// E3b, active frame: the edited method is on the stack (stopped inside it) when the delta applies. SharpDbg does
-	/// not remap active frames (no <c>RemapFunction</c>; a <c>FunctionRemapOpportunity</c> callback is continued), so the
+	/// E3b, active frame without line maps: the edited method is on the stack (stopped inside it) when the delta applies.
+	/// Without the client's <c>lineMaps</c> SharpDbg does not remap (a <c>FunctionRemapOpportunity</c> callback is only
+	/// continued; the remapping case is <see cref="ApplyDelta_WithLineMaps_RemapsTheActiveFrameAtAnUnchangedStatement"/>), so the
 	/// frame must finish on the code it started with and the next call must run the new code, without hanging the
 	/// debuggee or reporting a stop of its own.
 	/// </summary>

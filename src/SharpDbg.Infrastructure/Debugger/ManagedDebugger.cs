@@ -621,6 +621,7 @@ public partial class ManagedDebugger
 			moduleInfo.Dispose();
 		}
 		_modules.Clear();
+		_remapPlans.Clear();
 
 		// Deactivate all breakpoints
 		EntryCorBreakpoint?.TryActivate(false);
