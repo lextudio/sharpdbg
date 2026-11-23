@@ -178,6 +178,7 @@ public partial class ManagedDebugger
 				case BreakCorDebugManagedCallbackEventArgs a: HandleBreak(sender, a); break;
 				case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
 				case Exception2CorDebugManagedCallbackEventArgs a: HandleException2(sender, a); break;
+				case FunctionRemapOpportunityCorDebugManagedCallbackEventArgs a: HandleFunctionRemapOpportunity(a); break;
 				case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
 				default: CorProcess?.Continue(false); break;
 			}

@@ -315,6 +315,27 @@ public partial class ModuleMetadataReader : IDisposable
 		return true;
 	}
 
+	/// <summary>A method's sequence point with its document resolved, as the current symbol view (baseline plus deltas) has it.</summary>
+	public readonly record struct SequencePointInfo(int Offset, string DocumentPath, int StartLine, int StartColumn, int EndLine, int EndColumn, bool IsHidden);
+
+	/// <summary>
+	/// Every sequence point of <paramref name="methodToken"/> in IL order, from the current symbol view. Taken before and
+	/// after a PDB delta, the two lists describe one method version each, which is what an active-frame remap maps between.
+	/// </summary>
+	public IReadOnlyList<SequencePointInfo> GetSequencePoints(int methodToken)
+	{
+		if (!TryGetMethodDebugInformation(methodToken, out var reader, out var methodDebugInfo) || methodDebugInfo.SequencePointsBlob.IsNil)
+			return [];
+		var points = new List<SequencePointInfo>();
+		foreach (var sp in methodDebugInfo.GetSequencePoints())
+		{
+			var documentHandle = sp.Document.IsNil ? methodDebugInfo.Document : sp.Document;
+			var path = documentHandle.IsNil ? "" : reader.GetString(reader.GetDocument(documentHandle).Name);
+			points.Add(new SequencePointInfo(sp.Offset, path, sp.StartLine, sp.StartColumn, sp.EndLine, sp.EndColumn, sp.IsHidden));
+		}
+		return points;
+	}
+
 	public (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? GetSourceLocationForOffset(int methodToken, int ilOffset)
 	{
 		if (!TryGetMethodDebugInformation(methodToken, out var reader, out var methodDebugInfo)) return null;
