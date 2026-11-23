@@ -44,6 +44,12 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
 		var invalidUpdatedMethod = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==", UpdatedMethodTokens = [0x02000001] });
 		invalidUpdatedMethod.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("invalid updatedMethodTokens");
 
+		var invalidLineMaps = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==",
+			LineMaps = new[] { new { documentPath = "/src/Program.cs", unchangedLines = new[] { new { oldStartLine = 0, newStartLine = 1, lineCount = 1 } } } } });
+		invalidLineMaps.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("invalid lineMaps");
+		var lineMapsNotAnArray = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==", LineMaps = "x" });
+		lineMapsNotAnArray.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("invalid lineMaps");
+
 		var notOptedIn = host.SendRequest(new ApplyDeltasArguments { Mvid = Guid.NewGuid().ToString("D"), Metadata = "AQ==", Il = "Ag==" });
 		notOptedIn.Value.Should().BeOfType<DapError>().Which.Message.Should().Contain("enableEditAndContinue");
 
@@ -66,6 +72,7 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
 		public string Metadata { get; init; } = "";
 		public string Il { get; init; } = "";
 		public int[]? UpdatedMethodTokens { get; init; }
+		public object? LineMaps { get; init; }
 	}
 	private sealed record ApplyDeltasResponse;
 }

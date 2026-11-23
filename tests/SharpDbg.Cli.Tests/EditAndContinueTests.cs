@@ -230,4 +230,254 @@ public class EditAndContinueTests(ITestOutputHelper testOutputHelper)
 			try { Directory.Delete(dir, true); } catch { }
 		}
 	}
+
+	/// <summary>
+	/// E3b, active frame: the edited method is on the stack (stopped inside it) when the delta applies. SharpDbg does
+	/// not remap active frames (no <c>RemapFunction</c>; a <c>FunctionRemapOpportunity</c> callback is continued), so the
+	/// frame must finish on the code it started with and the next call must run the new code, without hanging the
+	/// debuggee or reporting a stop of its own.
+	/// </summary>
+	[Fact]
+	public async Task ApplyDelta_ToAnActiveFrame_FinishesTheOldCodeAndCallsTheNew()
+	{
+		const string target = """
+			using System;
+			using System.Diagnostics;
+			public static class Target
+			{
+			    public static string Get(int n)
+			    {
+			        var before = "VERSION";
+			        if (n == 1) Debugger.Break();
+			        return before + "|VERSION";
+			    }
+			}
+			public static class Program
+			{
+			    public static int Main()
+			    {
+			        Console.WriteLine("first=" + Target.Get(1));
+			        Console.WriteLine("second=" + Target.Get(2));
+			        return 0;
+			    }
+			}
+			""";
+		var dir = Path.Combine(Path.GetTempPath(), "sharpdbg-enc-active-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(dir);
+		try
+		{
+			var tpa = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+			var refs = tpa.Where(p => Path.GetFileName(p) is "System.Private.CoreLib.dll" or "System.Runtime.dll" or "System.Console.dll" or "netstandard.dll" or "System.Diagnostics.Debug.dll")
+				.Select(p => MetadataReference.CreateFromFile(p)).ToArray();
+			var sourcePath = Path.Combine(dir, "Program.cs");
+			CSharpCompilation Make(string v) => CSharpCompilation.Create("enc_active",
+				[CSharpSyntaxTree.ParseText(SourceText.From(target.Replace("VERSION", v), Encoding.UTF8), path: sourcePath)], refs,
+				new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Debug));
+			var v1 = Make("v1");
+			var pe = new MemoryStream();
+			var pdb = new MemoryStream();
+			var pdbPath = Path.Combine(dir, "enc_active.pdb");
+			v1.Emit(pe, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb, pdbFilePath: pdbPath)).Success.Should().BeTrue();
+			var dll = Path.Combine(dir, "enc_active.dll");
+			File.WriteAllBytes(dll, pe.ToArray());
+			File.WriteAllBytes(pdbPath, pdb.ToArray());
+			File.WriteAllText(Path.Combine(dir, "enc_active.runtimeconfig.json"),
+				"""{"runtimeOptions":{"tfm":"netMAJOR.0","framework":{"name":"Microsoft.NETCore.App","version":"MAJOR.0.0"}}}"""
+					.Replace("MAJOR", Environment.Version.Major.ToString()));
+			var metadata = ModuleMetadata.CreateFromImage(pe.ToArray());
+			var reader = metadata.GetMetadataReader();
+			var mvid = reader.GetGuid(reader.GetModuleDefinition().Mvid);
+			var baseline = EmitBaseline.CreateInitialBaseline(v1, metadata,
+				_ => EditAndContinueMethodDebugInformation.Create(ImmutableArray<byte>.Empty, ImmutableArray<byte>.Empty),
+				_ => default(StandaloneSignatureHandle), hasPortableDebugInformation: true);
+			var v2 = Make("v2");
+			var edit = new SemanticEdit(SemanticEditKind.Update,
+				v1.GetTypeByMetadataName("Target")!.GetMembers("Get")[0], v2.GetTypeByMetadataName("Target")!.GetMembers("Get")[0]);
+			var mdDelta = new MemoryStream();
+			var ilDelta = new MemoryStream();
+			var pdbDelta = new MemoryStream();
+			var diff = v2.EmitDifference(baseline, [edit], _ => false, mdDelta, ilDelta, pdbDelta);
+			diff.Success.Should().BeTrue();
+
+			var output = new StringBuilder();
+			var log = new StringBuilder();
+			var stopped = new TaskCompletionSource<int>();
+			var exited = new TaskCompletionSource();
+			var stops = 0;
+			var debugger = new ManagedDebugger(m => { testOutputHelper.WriteLine(m); lock (log) log.AppendLine(m); }) { EnableEditAndContinue = true };
+			debugger.OnStopped += (tid, _) => { Interlocked.Increment(ref stops); stopped.TrySetResult(tid); };
+			debugger.OnStopped2 += (tid, _, _, _, _, _) => { Interlocked.Increment(ref stops); stopped.TrySetResult(tid); };
+			debugger.OnOutput += (s, _) => { lock (output) output.Append(s); };
+			debugger.OnExited += _ => exited.TrySetResult();
+			debugger.OnTerminated += () => exited.TrySetResult();
+			debugger.Launch(new LaunchInfo
+			{
+				LaunchRequestConsoleType = LaunchRequestConsoleType.InternalConsole, Cwd = dir,
+				Program = DotnetHost, StopAtEntry = false, Arguments = [dll], Env = new Dictionary<string, string>(),
+			}, justMyCode: false);
+			await debugger.ConfigurationDone();
+
+			// Stopped at Debugger.Break() inside Get: the edited method is the active frame.
+			(await Task.WhenAny(stopped.Task, Task.Delay(30000))).Should().BeSameAs(stopped.Task);
+			var result = debugger.ApplyDelta(mvid, mdDelta.ToArray(), ilDelta.ToArray(), pdbDelta.ToArray(),
+				diff.UpdatedMethods.Select(method => MetadataTokens.GetToken(method)).ToArray());
+			result.Success.Should().BeTrue(result.Message);
+
+			debugger.HandleContinueRequest(stopped.Task.Result);
+			(await Task.WhenAny(exited.Task, Task.Delay(30000))).Should().BeSameAs(exited.Task, "the debuggee must not hang after an active-frame edit");
+			try { debugger.Disconnect(true); } catch { }
+			string text;
+			lock (output) text = output.ToString();
+			text.Should().Contain("first=v1|v1", "the active frame finishes on the code it started with");
+			text.Should().Contain("second=v2|v2", "a new call runs the updated method");
+			stops.Should().Be(1, "only the Debugger.Break() stop; the remap callback is not reported as a stop");
+			// The runtime offers the old frame a remap at each sequence point it reaches (ICorDebugManagedCallback2,
+			// 4 times here); without it this test would not have exercised an active frame at all.
+			string events;
+			lock (log) events = log.ToString();
+			events.Should().Contain("Event: FunctionRemapOpportunity", "the edited method must have been an active frame");
+		}
+		finally
+		{
+			try { Directory.Delete(dir, true); } catch { }
+		}
+	}
+
+	/// <summary>
+	/// E3b, active-frame remap: with the unchanged lines of the edit, a frame stopped inside the updated method moves to
+	/// the new version at the next statement the edit did not touch. Two lines inserted above shift every statement, and
+	/// a statement after the stop changes; the frame computes its first part with the old code and the rest with the new.
+	/// </summary>
+	[Fact]
+	public async Task ApplyDelta_WithLineMaps_RemapsTheActiveFrameAtAnUnchangedStatement()
+	{
+		const string target = """
+			using System;
+			using System.Diagnostics;
+			public static class Target
+			{
+			    public static string Get(int n)
+			    {
+			PADDING        var before = "VERSION";
+			        if (n == 1) Debugger.Break();
+			        var mid = before.Length;
+			        var after = "VERSION";
+			        return before + "|" + after + "|" + mid;
+			    }
+			}
+			public static class Program
+			{
+			    public static int Main()
+			    {
+			        Console.WriteLine("first=" + Target.Get(1));
+			        Console.WriteLine("second=" + Target.Get(2));
+			        return 0;
+			    }
+			}
+			""";
+		static string Text(string version, int padding) => target.Replace("VERSION", version).Replace("PADDING", string.Concat(Enumerable.Repeat("\n", padding)));
+		var dir = Path.Combine(Path.GetTempPath(), "sharpdbg-enc-remap-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(dir);
+		try
+		{
+			var tpa = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+			var refs = tpa.Where(p => Path.GetFileName(p) is "System.Private.CoreLib.dll" or "System.Runtime.dll" or "System.Console.dll" or "netstandard.dll" or "System.Diagnostics.Debug.dll")
+				.Select(p => MetadataReference.CreateFromFile(p)).ToArray();
+			var sourcePath = Path.Combine(dir, "Program.cs");
+			CSharpCompilation Make(string text) => CSharpCompilation.Create("enc_remap",
+				[CSharpSyntaxTree.ParseText(SourceText.From(text, Encoding.UTF8), path: sourcePath)], refs,
+				new CSharpCompilationOptions(OutputKind.ConsoleApplication, optimizationLevel: OptimizationLevel.Debug));
+			var oldText = Text("v1", 0);
+			var newText = Text("v2", 2);
+			var v1 = Make(oldText);
+			var pe = new MemoryStream();
+			var pdb = new MemoryStream();
+			var pdbPath = Path.Combine(dir, "enc_remap.pdb");
+			v1.Emit(pe, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb, pdbFilePath: pdbPath)).Success.Should().BeTrue();
+			var dll = Path.Combine(dir, "enc_remap.dll");
+			File.WriteAllBytes(dll, pe.ToArray());
+			File.WriteAllBytes(pdbPath, pdb.ToArray());
+			File.WriteAllText(Path.Combine(dir, "enc_remap.runtimeconfig.json"),
+				"""{"runtimeOptions":{"tfm":"netMAJOR.0","framework":{"name":"Microsoft.NETCore.App","version":"MAJOR.0.0"}}}"""
+					.Replace("MAJOR", Environment.Version.Major.ToString()));
+			var metadata = ModuleMetadata.CreateFromImage(pe.ToArray());
+			var reader = metadata.GetMetadataReader();
+			var mvid = reader.GetGuid(reader.GetModuleDefinition().Mvid);
+			var baseline = EmitBaseline.CreateInitialBaseline(v1, metadata,
+				_ => EditAndContinueMethodDebugInformation.Create(ImmutableArray<byte>.Empty, ImmutableArray<byte>.Empty),
+				_ => default(StandaloneSignatureHandle), hasPortableDebugInformation: true);
+			var v2 = Make(newText);
+			var edit = new SemanticEdit(SemanticEditKind.Update,
+				v1.GetTypeByMetadataName("Target")!.GetMembers("Get")[0], v2.GetTypeByMetadataName("Target")!.GetMembers("Get")[0]);
+			var mdDelta = new MemoryStream();
+			var ilDelta = new MemoryStream();
+			var pdbDelta = new MemoryStream();
+			var diff = v2.EmitDifference(baseline, [edit], _ => false, mdDelta, ilDelta, pdbDelta);
+			diff.Success.Should().BeTrue();
+			var lineMaps = new[] { new SourceLineMap(sourcePath, UnchangedLines(oldText, newText)) };
+
+			var output = new StringBuilder();
+			var log = new StringBuilder();
+			var stopped = new TaskCompletionSource<int>();
+			var exited = new TaskCompletionSource();
+			var debugger = new ManagedDebugger(m => { testOutputHelper.WriteLine(m); lock (log) log.AppendLine(m); }) { EnableEditAndContinue = true };
+			debugger.OnStopped += (tid, _) => stopped.TrySetResult(tid);
+			debugger.OnStopped2 += (tid, _, _, _, _, _) => stopped.TrySetResult(tid);
+			debugger.OnOutput += (s, _) => { lock (output) output.Append(s); };
+			debugger.OnExited += _ => exited.TrySetResult();
+			debugger.OnTerminated += () => exited.TrySetResult();
+			debugger.Launch(new LaunchInfo
+			{
+				LaunchRequestConsoleType = LaunchRequestConsoleType.InternalConsole, Cwd = dir,
+				Program = DotnetHost, StopAtEntry = false, Arguments = [dll], Env = new Dictionary<string, string>(),
+			}, justMyCode: false);
+			await debugger.ConfigurationDone();
+
+			(await Task.WhenAny(stopped.Task, Task.Delay(30000))).Should().BeSameAs(stopped.Task);
+			var result = debugger.ApplyDelta(mvid, mdDelta.ToArray(), ilDelta.ToArray(), pdbDelta.ToArray(),
+				diff.UpdatedMethods.Select(method => MetadataTokens.GetToken(method)).ToArray(), lineMaps);
+			result.Success.Should().BeTrue(result.Message);
+
+			debugger.HandleContinueRequest(stopped.Task.Result);
+			(await Task.WhenAny(exited.Task, Task.Delay(30000))).Should().BeSameAs(exited.Task, "the debuggee must not hang after a remap");
+			try { debugger.Disconnect(true); } catch { }
+			string text;
+			lock (output) text = output.ToString();
+			string events;
+			lock (log) events = log.ToString();
+			events.Should().Contain("RemapFunction", "the frame must have been remapped");
+			text.Should().Contain("first=v1|v2|2", "before ran on the old code, after on the new, and the local survived the remap");
+			text.Should().Contain("second=v2|v2|2");
+		}
+		finally
+		{
+			try { Directory.Delete(dir, true); } catch { }
+		}
+	}
+
+	/// <summary>Unchanged line ranges between two texts (1-based), from a longest common subsequence of their lines.</summary>
+	private static UnchangedLineRange[] UnchangedLines(string oldText, string newText)
+	{
+		var a = oldText.Split('\n');
+		var b = newText.Split('\n');
+		var lcs = new int[a.Length + 1, b.Length + 1];
+		for (var i = a.Length - 1; i >= 0; i--)
+			for (var j = b.Length - 1; j >= 0; j--)
+				lcs[i, j] = a[i] == b[j] ? lcs[i + 1, j + 1] + 1 : Math.Max(lcs[i + 1, j], lcs[i, j + 1]);
+		var ranges = new List<UnchangedLineRange>();
+		for (int i = 0, j = 0; i < a.Length && j < b.Length;)
+		{
+			if (a[i] == b[j])
+			{
+				if (ranges.Count > 0 && ranges[^1] is var last && last.OldStartLine + last.LineCount == i + 1 && last.NewStartLine + last.LineCount == j + 1)
+					ranges[^1] = last with { LineCount = last.LineCount + 1 };
+				else
+					ranges.Add(new UnchangedLineRange(i + 1, j + 1, 1));
+				i++; j++;
+			}
+			else if (lcs[i + 1, j] >= lcs[i, j + 1]) i++;
+			else j++;
+		}
+		return ranges.ToArray();
+	}
 }

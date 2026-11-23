@@ -301,11 +301,47 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			.ToArray();
 		if (updatedMethodTokens.Any(token => (token & unchecked((int)0xFF000000)) != 0x06000000 || (token & 0x00FFFFFF) == 0))
 			throw new InvalidOperationException("sharpdbg/applyDeltas has an invalid updatedMethodTokens entry");
+		var lineMaps = ParseLineMaps(args["lineMaps"]);
 		if (!_debugger.EnableEditAndContinue)
 			throw new InvalidOperationException("sharpdbg/applyDeltas requires enableEditAndContinue at launch");
-		var result = _debugger.ApplyDelta(mvid, metadata, il, pdb, updatedMethodTokens);
+		var result = _debugger.ApplyDelta(mvid, metadata, il, pdb, updatedMethodTokens, lineMaps);
 		if (!result.Success) throw new InvalidOperationException(result.Message);
 		return new JsonObject { ["applied"] = true, ["message"] = result.Message, ["hresult"] = result.HResult };
+	}
+
+	/// <summary>
+	/// The optional <c>lineMaps</c> of <c>sharpdbg/applyDeltas</c>: per document, the lines the edit left unchanged
+	/// (<c>[{ documentPath, unchangedLines: [{ oldStartLine, newStartLine, lineCount }] }]</c>, 1-based). With them an
+	/// active frame of an updated method moves to the new version at an unchanged statement; without them it does not.
+	/// </summary>
+	static IReadOnlyList<SourceLineMap>? ParseLineMaps(JsonNode? node)
+	{
+		if (node is null) return null;
+		static InvalidOperationException Invalid() => new("sharpdbg/applyDeltas has invalid lineMaps");
+		try
+		{
+			if (node is not JsonArray maps) throw Invalid();
+			var result = new List<SourceLineMap>();
+			foreach (var map in maps)
+			{
+				var documentPath = map?["documentPath"]?.GetValue<string>();
+				if (string.IsNullOrEmpty(documentPath) || map!["unchangedLines"] is not JsonArray lines) throw Invalid();
+				var ranges = new List<UnchangedLineRange>();
+				foreach (var line in lines)
+				{
+					var range = new UnchangedLineRange(line?["oldStartLine"]?.GetValue<int>() ?? 0,
+						line?["newStartLine"]?.GetValue<int>() ?? 0, line?["lineCount"]?.GetValue<int>() ?? 0);
+					if (range.OldStartLine < 1 || range.NewStartLine < 1 || range.LineCount < 1) throw Invalid();
+					ranges.Add(range);
+				}
+				result.Add(new SourceLineMap(documentPath, ranges));
+			}
+			return result;
+		}
+		catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+		{
+			throw ex.Message.Contains("lineMaps") ? ex : Invalid();
+		}
 	}
 
 	/// <summary>
