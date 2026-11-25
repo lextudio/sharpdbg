@@ -199,10 +199,12 @@ public partial class ManagedDebugger
 	{
 		foreach (var breakpoint in _breakpointManager.GetAllBreakpoints())
 		{
-			if (breakpoint.Binding is not BreakpointBinding.SourceBound { ModuleBaseAddress: var baseAddress, CorBreakpoint: var oldBreakpoint } || baseAddress != module.BaseAddress)
+			if (breakpoint.Binding is not BreakpointBinding.SourceBound { ModuleBaseAddress: var baseAddress } || baseAddress != module.BaseAddress)
 				continue;
+			// every runtime breakpoint of it, the further locations of a #line-mapped document included
+			var oldBreakpoints = breakpoint.CorBreakpoints.ToList();
 			breakpoint.Binding = new BreakpointBinding.Unbound("Rebinding after Edit and Continue update.");
-			DeactivateIfUnused(oldBreakpoint);
+			foreach (var oldBreakpoint in oldBreakpoints) DeactivateIfUnused(oldBreakpoint);
 			TryBindBreakpoint(breakpoint);
 			OnBreakpointChanged?.Invoke(breakpoint);
 		}

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
@@ -459,7 +460,18 @@ public partial class ManagedDebugger
 				?? ilCode.CreateBreakpoint(resolved.ILOffset);
 			if (corBreakpoint != EntryCorBreakpoint) corBreakpoint.Activate(true);
 
-			bp.Binding = new BreakpointBinding.SourceBound(corBreakpoint, targetModule.BaseAddress, resolved);
+			// A document whose code comes in through #line (XAML) maps one line onto several generated methods: bind them all
+			var alsoBound = ImmutableArray.CreateBuilder<BreakpointBinding.AlsoBoundLocation>();
+			var bestForAdditional = documentMatches.First(match => ReferenceEquals(match.Module, targetModule)).Document;
+			foreach (var other in targetModule.MetadataReader.ResolveAdditionalBreakpoints(bestForAdditional, bp.RequestedLine, bp.RequestedColumn, resolved))
+			{
+				var otherFunction = targetModule.Module.GetFunctionFromToken(other.MethodToken);
+				var otherCorBreakpoint = _breakpointManager.FindSourceCorBreakpointAt(targetModule.BaseAddress, other.MethodToken, other.ILOffset)
+					?? otherFunction.ILCode.CreateBreakpoint(other.ILOffset);
+				otherCorBreakpoint.Activate(true);
+				alsoBound.Add(new BreakpointBinding.AlsoBoundLocation(otherCorBreakpoint, other.MethodToken, other.ILOffset));
+			}
+			bp.Binding = new BreakpointBinding.SourceBound(corBreakpoint, targetModule.BaseAddress, resolved) { AlsoBound = alsoBound.ToImmutable() };
 
 			_logger?.Invoke($"Breakpoint bound at {bp.FilePath}:{bp.RequestedLine} -> resolved to line {resolved.StartLine}, IL offset {resolved.ILOffset} in method 0x{resolved.MethodToken:X}");
 			return true;

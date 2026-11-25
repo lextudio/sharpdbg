@@ -43,7 +43,7 @@ public class BreakpointInfo
 
 	public IEnumerable<ICorDebugFunctionBreakpoint> CorBreakpoints => Binding switch
 	{
-		BreakpointBinding.SourceBound bound => [bound.CorBreakpoint],
+		BreakpointBinding.SourceBound bound => [bound.CorBreakpoint, .. bound.AlsoBound.Select(also => also.CorBreakpoint)],
 		BreakpointBinding.FunctionBound bound => bound.Bindings.Select(binding => binding.CorBreakpoint),
 		BreakpointBinding.Unbound or BreakpointBinding.Rejected => []
 	};

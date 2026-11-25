@@ -158,11 +158,15 @@ public class BreakpointManager
 	{
 		lock (_lock)
 		{
-			return _breakpoints.Values
-				.Select(bp => bp.Binding)
-				.OfType<BreakpointBinding.SourceBound>()
-				.FirstOrDefault(bound => bound.ModuleBaseAddress == moduleBaseAddress && bound.Resolved.MethodToken == methodToken && bound.Resolved.ILOffset == ilOffset)
-				?.CorBreakpoint;
+			foreach (var bound in _breakpoints.Values.Select(bp => bp.Binding).OfType<BreakpointBinding.SourceBound>())
+			{
+				if (bound.ModuleBaseAddress != moduleBaseAddress) continue;
+				if (bound.Resolved.MethodToken == methodToken && bound.Resolved.ILOffset == ilOffset) return bound.CorBreakpoint;
+				// the further locations of a breakpoint on a #line-mapped document (XAML) can be shared as well
+				foreach (var also in bound.AlsoBound)
+					if (also.MethodToken == methodToken && also.ILOffset == ilOffset) return also.CorBreakpoint;
+			}
+			return null;
 		}
 	}
 
