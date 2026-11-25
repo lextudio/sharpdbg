@@ -35,6 +35,7 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 	[InlineData("SupportsLoadedSourcesRequest")]
 	[InlineData("SupportsBreakpointLocationsRequest")]
 	[InlineData("SupportsRestartRequest")]
+	[InlineData("SupportsSetVariable")]
 	public void Initialize_AdvertisesCapability(string capability)
 	{
 		var (input, output, adapter) = SharpDbgInMemory.NewDebugAdapterStreams();
@@ -72,6 +73,35 @@ public class DebuggerFeatureConformanceTests(ITestOutputHelper testOutputHelper)
 
 		var stopped = await session.Host.WaitForStoppedEvent();
 		stopped.Reason.Should().Be(StoppedEvent.ReasonValue.Goto);
+	}
+
+	[Fact]
+	public async Task SetVariable_UpdatesStackVariables()
+	{
+		using var session = await StopInAsync(VariablesFile, 149);
+		var scopes = session.Host.SendRequestSync(new ScopesArguments { FrameId = session.Frame.Id });
+		var localsRef = scopes.Scopes.First(s => s.Name == "Locals").VariablesReference;
+
+		void SetAndAssert(string name, string value, string expected)
+		{
+			var response = session.Host.SendRequestSync(new SetVariableArguments { VariablesReference = localsRef, Name = name, Value = value });
+			response.Value.Should().Be(expected, $"setVariable should return the value the frame now holds for {name}");
+
+			// The write has to survive a fresh read, not only be echoed in the response.
+			var variables = session.Host.SendRequestSync(new VariablesArguments { VariablesReference = localsRef });
+			variables.Variables.First(v => v.Name == name).Value.Should().Be(expected, $"{name} should still hold the new value");
+		}
+
+		SetAndAssert("localInt", "42", "42");
+		SetAndAssert("localString", "world", "\"world\"");
+		SetAndAssert("localNullableString", "abc", "\"abc\"");
+		SetAndAssert("localObject", "null", "null");
+
+		// A boxed primitive is a reference to shared boxed storage, not the local's primitive slot.
+		var unsupported = Record.Exception(() => session.Host.SendRequestSync(
+			new SetVariableArguments { VariablesReference = localsRef, Name = "localBoxedInt", Value = "7" }));
+		unsupported.Should().NotBeNull();
+		unsupported!.Message.Should().Contain("not supported");
 	}
 
 	[Fact]

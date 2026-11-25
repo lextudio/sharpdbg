@@ -143,7 +143,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			["supportsHitConditionalBreakpoints"] = true,
 			["supportsEvaluateForHovers"] = true,
 			["supportsStepBack"] = false,
-			["supportsSetVariable"] = false,
+			["supportsSetVariable"] = true,
 			["supportsRestartFrame"] = false,
 			["supportsTerminateRequest"] = true,
 			["supportsExceptionInfoRequest"] = true,
@@ -270,6 +270,7 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			"scopes" => Scopes(args),
 			"variables" => await VariablesAsync(args),
 			"evaluate" => await EvaluateAsync(args),
+			"setVariable" => await SetVariableAsync(args),
 			"continue" => Continue(args),
 			"next" => await StepAsync(() => _debugger.StepNext(RequiredInt(args, "threadId"))),
 			"stepIn" => await StepAsync(() => _debugger.StepIn(RequiredInt(args, "threadId"))),
@@ -806,6 +807,20 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 				_ => throw new ArgumentOutOfRangeException(nameof(hint), attributes, null)
 			});
 		return json;
+	}
+
+	async Task<JsonObject> SetVariableAsync(JsonObject args)
+	{
+		var variablesReference = RequiredInt(args, "variablesReference");
+		var name = GetString(args, "name") ?? throw new InvalidOperationException("setVariable requires 'name'");
+		var value = GetString(args, "value") ?? throw new InvalidOperationException("setVariable requires 'value'");
+		var result = await _debugger.SetVariable(variablesReference, name, value);
+		return new JsonObject
+		{
+			["value"] = result.Value,
+			["type"] = result.Type,
+			["variablesReference"] = result.VariablesReference
+		};
 	}
 
 	JsonObject Continue(JsonObject args)
