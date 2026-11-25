@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
@@ -97,6 +98,30 @@ public partial class ModuleMetadataReader
 
 		return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
 	}
+
+	/// <summary>
+	/// The location in every OTHER method whose sequence points cover the requested position, for a document that is not the language of the compiled
+	/// code (XAML, Razor: the code reaches the PDB through <c>#line</c>). <see cref="ResolveBreakpoint"/> picks one method per line, a rule made for a lambda
+	/// on the same line as its enclosing call; such a document maps one source line onto several generated methods (the element's own statements, the
+	/// bodies generated for its expressions) and the author means all of them. Empty for an ordinary source file.
+	/// </summary>
+	public ImmutableArray<ResolvedBreakpoint> ResolveAdditionalBreakpoints(SourceDocumentMatch document, int line, int? column, ResolvedBreakpoint primary)
+	{
+		var reader = _pdbMetadataReader;
+		if (reader is null || IsCompiledLanguageDocument(document.DocumentPath)) return ImmutableArray<ResolvedBreakpoint>.Empty;
+		var additional = ImmutableArray.CreateBuilder<ResolvedBreakpoint>();
+		foreach (var handle in reader.MethodDebugInformation)
+		{
+			var token = MetadataTokens.GetToken(handle.ToDefinitionHandle());
+			if (token == primary.MethodToken || _updatedMethodDebugInfo.ContainsKey(token)) continue;
+			var candidate = CollectCandidate(reader, token, reader.GetMethodDebugInformation(handle), document.DocumentPath, line, column);
+			if (candidate is { CoversLine: true }) additional.Add(NewResolvedBreakpoint(candidate.Token, candidate.CoveringSp!.Value, candidate.DocPath));
+		}
+		return additional.ToImmutable();
+	}
+
+	private static bool IsCompiledLanguageDocument(string documentPath) =>
+		Path.GetExtension(documentPath).ToLowerInvariant() is ".cs" or ".vb" or ".fs" or ".fsi" or ".fsx";
 
 	private static MethodCandidate? CollectCandidate(MetadataReader reader, int methodToken, MethodDebugInformation info, string documentPath, int line, int? column)
 	{
