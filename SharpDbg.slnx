@@ -29,6 +29,7 @@
     <Project Path="tests/DebuggableConsoleApp/DebuggableConsoleApp.csproj" />
     <Project Path="tests/EmbeddedSourceApp/EmbeddedSourceApp.csproj" />
     <Project Path="tests/RuntimeAsyncConsoleApp/RuntimeAsyncConsoleApp.csproj" />
+    <Project Path="tests/RuntimeAsyncOptimizedLib/RuntimeAsyncOptimizedLib.csproj" />
     <Project Path="tests/SharpDbg.AndroidAgent.Tests/SharpDbg.AndroidAgent.Tests.csproj" />
     <Project Path="tests/SharpDbg.Cli.Tests/SharpDbg.Cli.Tests.csproj" />
     <Project Path="tests/TopLevelStatementsConsoleApp/TopLevelStatementsConsoleApp.csproj" />

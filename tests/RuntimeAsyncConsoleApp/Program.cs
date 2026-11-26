@@ -21,6 +21,7 @@ public static class Program
 			AsyncStackTraceClass.TestAsync().GetAwaiter().GetResult();
 			AsyncFanOutClass.TestAsync().GetAwaiter().GetResult();
 			AsyncMultipleAwaitsClass.TestAsync().GetAwaiter().GetResult();
+			RuntimeAsyncOptimizedLib.OptimizedIl0CallClass.TestAsync().GetAwaiter().GetResult();
 			Thread.Sleep(100);
 		}
 	}

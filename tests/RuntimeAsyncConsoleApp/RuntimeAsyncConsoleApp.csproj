@@ -10,4 +10,8 @@
 		<NoWarn>$(NoWarn);CS0168;CS0219;CS0414</NoWarn> <!-- Unused locals and fields are inspected by debugger tests -->
 	</PropertyGroup>
 
+	<ItemGroup>
+		<ProjectReference Include="..\RuntimeAsyncOptimizedLib\RuntimeAsyncOptimizedLib.csproj" />
+	</ItemGroup>
+
 </Project>

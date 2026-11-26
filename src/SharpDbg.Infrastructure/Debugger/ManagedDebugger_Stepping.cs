@@ -314,15 +314,28 @@ public partial class ManagedDebugger
 	private bool TrySetupRunToRuntimeAsyncStart(ICorDebugThread thread)
 	{
 		if (_justMyCode) return false;
+		ICorDebugFunction? callee = null; // the frame directly above the one being looked at
 		foreach (var frame in EnumerateFramesForThread(thread))
 		{
-			if (frame is not ICorDebugILFrame ilFrame) return false;
+			if (frame is not ICorDebugILFrame ilFrame) return Rejected("a frame that is not IL: " + frame.GetType().Name);
 			var function = ilFrame.Function;
-			if (_modules.TryGetValue(function.Module.BaseAddress, out var module) is false) return false;
+			if (_modules.TryGetValue(function.Module.BaseAddress, out var module) is false) return Rejected($"0x{(int)function.Token:X} in an unknown module");
 			// The runtime's own code between the thunk and the stop
-			if (module.Module.Name.EndsWith("System.Private.CoreLib.dll", StringComparison.OrdinalIgnoreCase)) continue;
-			if (module.MetadataReader.IsRuntimeAsync((int)function.Token) is false) return false;
-			if (ilFrame.IP.pMappingResult is not (CorDebugMappingResult.MAPPING_UNMAPPED_ADDRESS or CorDebugMappingResult.MAPPING_NO_INFO)) return false;
+			if (module.Module.Name.EndsWith("System.Private.CoreLib.dll", StringComparison.OrdinalIgnoreCase))
+			{
+				callee = function;
+				continue;
+			}
+			if (module.MetadataReader.IsRuntimeAsync((int)function.Token) is false) return Rejected($"0x{(int)function.Token:X} in {Path.GetFileName(module.Module.Name)} is not runtime-async");
+			// The thunk has no IL of the method's mapped at its IP; .NET 11 GA reports it as an exact mapping at IL 0 instead. So does
+			// the method's own body calling out from IL 0 (a one-line body, or optimized code), which must not be taken for the thunk:
+			// a breakpoint at IL 0 would then never be hit and the step would never end. Only the thunk calls straight into AsyncHelpers
+			var ip = ilFrame.IP;
+			var unmapped = ip.pMappingResult is CorDebugMappingResult.MAPPING_UNMAPPED_ADDRESS or CorDebugMappingResult.MAPPING_NO_INFO;
+			if (!unmapped && ip.pMappingResult is CorDebugMappingResult.MAPPING_EXACT && ip.pnOffset == 0 && callee is not null && IsAsyncHelpersMethod(callee) is false)
+				return Rejected($"0x{(int)function.Token:X} calls 0x{(int)callee.Token:X} from IL 0, which is not in AsyncHelpers");
+			if (!unmapped && !(ip.pMappingResult is CorDebugMappingResult.MAPPING_EXACT && ip.pnOffset == 0 && callee is not null))
+				return Rejected($"0x{(int)function.Token:X} is mapped at its IP ({ilFrame.IP.pMappingResult}, IL 0x{ilFrame.IP.pnOffset:X})");
 
 			_logger?.Invoke($"Step into the runtime-async method 0x{(int)function.Token:X} through its thunk: running to its start");
 			var breakpoint = function.ILCode.CreateBreakpoint(0);
@@ -330,7 +343,34 @@ public partial class ManagedDebugger
 			StartStep(new StepState.RunToStateMachineStart(breakpoint, thread.Id));
 			return true;
 		}
-		return false;
+		return Rejected("no frame outside CoreLib");
+
+		bool Rejected(string why)
+		{
+			_logger?.Invoke("Step-in call did not end in a runtime-async thunk: " + why);
+			return false;
+		}
+	}
+
+	/// <summary>Whether the CoreLib function is a method of System.Runtime.CompilerServices.AsyncHelpers or of a type nested in it</summary>
+	private static bool IsAsyncHelpersMethod(ICorDebugFunction function)
+	{
+		try
+		{
+			var metadata = function.Module.GetMetaDataInterface<IMetaDataImport>();
+			if (metadata.FindTypeDefByNameOrNull("System.Runtime.CompilerServices.AsyncHelpers", mdToken.Nil) is not { } helpers) return false;
+			mdTypeDef type = function.Class.Token;
+			for (var depth = 0; depth < 8 && !type.IsNil; depth++)
+			{
+				if (type == helpers) return true;
+				type = metadata.GetNestedClassProps(type); // its enclosing type; nil for a top-level type
+			}
+			return false;
+		}
+		catch (Exception)
+		{
+			return false;
+		}
 	}
 
 	/// <summary>
