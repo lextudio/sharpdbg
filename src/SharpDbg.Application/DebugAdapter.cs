@@ -113,9 +113,50 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		return HandleJsonAsync(request.Command, arguments, context);
 	}
 
+	// A request that never answers left nothing in the log (a stackTrace after a step on linux-arm64, where GetStackTrace's own
+	// watchdog never fired either). This one watches every request from a dedicated thread, so it still reports when the
+	// thread pool is starved, and names the phase it is stuck in, the request holding the lock and the pool's counters.
+	sealed class InFlightRequest(string command)
+	{
+		public readonly string Command = command;
+		public readonly System.Diagnostics.Stopwatch Watch = System.Diagnostics.Stopwatch.StartNew();
+		public volatile string Phase = "dispatching";
+		public double NextReportSeconds = 5;
+	}
+
+	readonly ConcurrentDictionary<InFlightRequest, byte> _inFlight = new();
+	volatile InFlightRequest? _lockHolder;
+	System.Threading.Thread? _requestWatchdog;
+
+	void WatchRequests()
+	{
+		while (true)
+		{
+			System.Threading.Thread.Sleep(1000);
+			foreach (var request in _inFlight.Keys)
+			{
+				var seconds = request.Watch.Elapsed.TotalSeconds;
+				if (seconds < request.NextReportSeconds) continue;
+				request.NextReportSeconds = seconds + 10;
+				var holder = _lockHolder;
+				_logger?.Invoke($"DAP request {request.Command} still running after {seconds:0}s: {request.Phase}; lock held by "
+					+ (holder is null ? "no request (free, or a runtime event)" : holder == request ? "this request" : $"{holder.Command} ({holder.Phase}, {holder.Watch.Elapsed.TotalSeconds:0}s)")
+					+ $"; thread pool {ThreadPool.ThreadCount} threads, {ThreadPool.PendingWorkItemCount} queued");
+			}
+		}
+	}
+
 	async ValueTask<DapResponse> HandleJsonAsync(string command, JsonObject arguments, DapRequestContext context)
 	{
 		_logger?.Invoke("DAP request: " + command);
+		if (_requestWatchdog is null && _logger is not null)
+		{
+			var watchdog = new System.Threading.Thread(WatchRequests) { IsBackground = true, Name = "SharpDbg request watchdog" };
+			if (Interlocked.CompareExchange(ref _requestWatchdog, watchdog, null) is null) watchdog.Start();
+		}
+		var inFlight = new InFlightRequest(command);
+		_inFlight.TryAdd(inFlight, 0);
+		_currentRequest.Value = inFlight;
 		try
 		{
 			JsonObject body = await HandleAsync(command, arguments);
@@ -129,6 +170,17 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 			_logger?.Invoke("DAP request failed: " + command + " " + ex);
 			return DapResponse.Failure(new DapError(ex.Message));
 		}
+		finally
+		{
+			_inFlight.TryRemove(inFlight, out _);
+		}
+	}
+
+	readonly AsyncLocal<InFlightRequest?> _currentRequest = new();
+
+	void SetPhase(string phase)
+	{
+		if (_currentRequest.Value is { } request) request.Phase = phase;
 	}
 
 	static JsonElement BuildCapabilities()
@@ -238,21 +290,34 @@ public sealed class DebugAdapter : IDisposable, IDapRequestHandler
 		// Not under the lock below: the thread that asked for these symbols holds it while it waits for this answer.
 		if (command == "loadSymbols") return LoadSymbols(args);
 
+		SetPhase("waiting for the request/runtime-event lock");
 		using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 		{
-			// With client symbols, draining the runtime events and the handlers themselves can wait for the client's symbols (see
-			// loadSymbols). Requests are dispatched one at a time on the connection's dispatch loop until a handler yields, so
-			// work that waits must not run there, or the answer could never be dispatched. The lock is already held, so the order
-			// of requests is unchanged. Without client symbols nothing waits and the path is the one it always was.
-			return _decompileExternalCode
-				? await HandleLockedAsync(command, args)
-				: await Task.Run(() => HandleLockedAsync(command, args));
+			var request = _currentRequest.Value;
+			_lockHolder = request;
+			SetPhase(_decompileExternalCode ? "holding the lock" : "holding the lock, waiting for a thread-pool thread");
+			try
+			{
+				// With client symbols, draining the runtime events and the handlers themselves can wait for the client's symbols (see
+				// loadSymbols). Requests are dispatched one at a time on the connection's dispatch loop until a handler yields, so
+				// work that waits must not run there, or the answer could never be dispatched. The lock is already held, so the order
+				// of requests is unchanged. Without client symbols nothing waits and the path is the one it always was.
+				return _decompileExternalCode
+					? await HandleLockedAsync(command, args, request)
+					: await Task.Run(() => HandleLockedAsync(command, args, request));
+			}
+			finally
+			{
+				if (_lockHolder == request) _lockHolder = null;
+			}
 		}
 	}
 
-	async Task<JsonObject> HandleLockedAsync(string command, JsonObject args)
+	async Task<JsonObject> HandleLockedAsync(string command, JsonObject args, InFlightRequest? request)
 	{
+		if (request is not null) request.Phase = "draining queued runtime events";
 		await _debugger.DrainRuntimeEventQueue();
+		if (request is not null) request.Phase = "running the handler";
 		return command switch
 		{
 			"configurationDone" => await ConfigurationDoneAsync(),
