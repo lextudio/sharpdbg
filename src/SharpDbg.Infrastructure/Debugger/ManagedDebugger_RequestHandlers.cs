@@ -364,6 +364,12 @@ public partial class ManagedDebugger
 
 		if (TryGetThread(threadIdInt) is not { } thread) return result;
 
+		// A stackTrace request that never returns hangs the client with nothing in the log (seen on linux-arm64 after a step
+		// over an await in a .NET 11 async method). Name the phase it is stuck in, without logging anything when it is quick.
+		var phase = "enumerating physical frames";
+		var watch = System.Diagnostics.Stopwatch.StartNew();
+		using var watchdog = new System.Threading.Timer(_ => _logger?.Invoke($"stackTrace on thread {threadIdInt} still running after {watch.Elapsed.TotalSeconds:0}s: {Volatile.Read(ref phase)}"),
+			null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
 		try
 		{
 			var endFrame = levels is null ? long.MaxValue : (long)startFrame + levels.Value;
@@ -377,6 +383,7 @@ public partial class ManagedDebugger
 			foreach (var (physicalDepth, frame) in EnumerateFramesForThread(thread).AsValueEnumerable().Index())
 			{
 				framesForSyntheticAsyncFrames.Add((physicalDepth, frame));
+				Volatile.Write(ref phase, $"enumerating physical frames (at depth {physicalDepth})");
 				if (IsHiddenRuntimeFrame(frame)) continue;
 				if (index >= endFrame) return result;
 				if (index >= startFrame)
@@ -388,9 +395,11 @@ public partial class ManagedDebugger
 			}
 
 			// Dispatcher info and physical frames have the same order, so advance them together to attach each chain to its frame
+			Volatile.Write(ref phase, $"reading runtime-async dispatchers ({framesForSyntheticAsyncFrames.Count} physical frames)");
 			using var dispatchers = framesForSyntheticAsyncFrames.Count is 0 ? null : _runtimeAsyncDispatchers.Dispatchers(framesForSyntheticAsyncFrames[0].frame).GetEnumerator();
 			foreach (var (physicalDepth, frame) in framesForSyntheticAsyncFrames)
 			{
+				Volatile.Write(ref phase, $"synthetic async caller frames of physical depth {physicalDepth} ({(_runtimeAsyncDispatchers.IsDispatcher(frame) ? "runtime-async dispatcher" : frame.GetType().Name)})");
 				var physicalFrameStackDepth = new FrameStackDepth(physicalDepth);
 				var syntheticFrames = frame switch
 				{
