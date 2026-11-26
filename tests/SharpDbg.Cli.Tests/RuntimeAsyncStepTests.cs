@@ -247,6 +247,38 @@ public class RuntimeAsyncStepTests(ITestOutputHelper testOutputHelper)
 		firstStatement.ReadStopInfo().line.Should().Be(16);
 	}
 
+	// An optimized runtime-async method whose first IL instruction is a call into CoreLib: a step into that call leaves the method's
+	// frame at IL 0 below a CoreLib method that is not AsyncHelpers (on .NET 11.0.0 the frame reports an approximate mapping there; the
+	// thunk of an unawaited call reports an exact one). Taking it for the thunk would set a breakpoint at IL 0 that is never hit again,
+	// and the step would never end: it must end like any step into code without source
+	[Fact]
+	public async Task SharpDbgCli_StepInRequest_IntoCoreLibCallAtIlZeroOfOptimizedAsyncMethod_Completes()
+	{
+		var startSuspended = true;
+		var (debugProtocolHost, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended, DebuggableProcessHelper.RuntimeAsyncConsoleApp);
+		using var _ = adapter;
+		using var __ = new ProcessKiller(p2);
+		using var ___ = debugProtocolHost;
+
+		var filePath = Path.JoinFromGitRoot("tests", "RuntimeAsyncOptimizedLib", "OptimizedIl0CallClass.cs");
+		await debugProtocolHost
+			.WithInitializeRequest()
+			.WithAttachRequest(p2.Id, justMyCode: false)
+			.WaitForInitializedEvent();
+		debugProtocolHost
+			.WithBreakpointsRequest(18, filePath)
+			.WithConfigurationDoneRequest()
+			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+
+		var callStop = await debugProtocolHost.WaitForStoppedEvent();
+		callStop.ReadStopInfo().line.Should().Be(18);
+		var stepped = await debugProtocolHost.WithStepInRequest(callStop.ThreadId!.Value).WaitForStoppedEvent();
+		stepped.Reason.Should().Be(StoppedEvent.ReasonValue.Step);
+		stepped.ThreadId.Should().Be(callStop.ThreadId);
+		// The getter has no source and Just My Code is off: the step comes back out to the method, past the call
+		stepped.ReadStopInfo().filePath.Should().EndWith("OptimizedIl0CallClass.cs");
+	}
+
 	// A 'break' jumps over the loop's own MoveNextAsync await to the hidden DisposeAsync, whose await yields: the step is carried across
 	// that await to the statement after the loop, not into the enumerator's finally or the framework code that resumes it
 	[Theory]

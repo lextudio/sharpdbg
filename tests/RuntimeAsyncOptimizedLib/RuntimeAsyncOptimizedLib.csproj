@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net11.0</TargetFramework>
+		<Features>runtime-async=on</Features>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<!-- Optimized on purpose: no leading nop, so a method's IL 0 can be a call. RuntimeAsyncStepTests relies on that -->
+		<Optimize>true</Optimize>
+		<DebugType>portable</DebugType>
+	</PropertyGroup>
+
+</Project>
