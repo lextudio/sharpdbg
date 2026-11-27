@@ -30,6 +30,10 @@ public partial class ManagedDebugger
 		EnsureSessionNotStarted();
 		_logger?.Invoke($"Launching program: {launchInfo.Program} {string.Join(' ', launchInfo.Arguments)}");
 		_justMyCode = justMyCode;
+		_noDebug = launchInfo.NoDebug;
+		// A launch through the terminal attaches through StartAttach; it must not inherit an earlier attach's options.
+		_debuggerLibraryDirectory = null;
+		_continueStoppedProcess = false;
 		_entryBreakpoint = launchInfo.StopAtEntry ? EntryBreakpointState.Armed.Instance : EntryBreakpointState.NotRequested.Instance;
 		_session = new SessionState.LaunchRequested(launchInfo);
 	}
@@ -95,6 +99,49 @@ public partial class ManagedDebugger
 			{
 				_logger?.Invoke($"Error forwarding debuggee output: {ex.Message}");
 			}
+		}
+	}
+
+	/// <summary>Run Without Debugging: start the process, stream its output, but never attach the debugger.</summary>
+	private void PerformLaunchWithoutDebugging(LaunchInfo launchInfo)
+	{
+		var processStartInfo = new ProcessStartInfo
+		{
+			FileName = launchInfo.Program,
+			WorkingDirectory = launchInfo.Cwd ?? Environment.CurrentDirectory,
+			UseShellExecute = false,
+			CreateNoWindow = true,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+			RedirectStandardInput = false,
+		};
+		foreach (var arg in launchInfo.Arguments)
+			processStartInfo.ArgumentList.Add(arg);
+		foreach (var (key, value) in launchInfo.Env)
+			processStartInfo.Environment[key] = value;
+
+		var process = Process.Start(processStartInfo) ?? throw new InvalidOperationException("Process start failed");
+		_noDebugProcess = process;
+		_attachedProcessId = process.Id;
+		process.OutputDataReceived += (_, e) => { if (e.Data is not null) ForwardOutput(e.Data + Environment.NewLine, isError: false); };
+		process.ErrorDataReceived += (_, e) => { if (e.Data is not null) ForwardOutput(e.Data + Environment.NewLine, isError: true); };
+		process.BeginOutputReadLine();
+		process.BeginErrorReadLine();
+		process.EnableRaisingEvents = true;
+		process.Exited += (_, _) =>
+		{
+			int? exitCode = null;
+			try { exitCode = process.ExitCode; } catch { /* the process handle may already be gone */ }
+			OnExited?.Invoke(exitCode);
+		};
+
+		_logger?.Invoke($"Process created without debugging, PID: {process.Id}");
+		OnProcessStarted?.Invoke(process.Id, launchInfo.Program);
+
+		void ForwardOutput(string output, bool isError)
+		{
+			try { OnOutput?.Invoke(output, isError); }
+			catch (Exception ex) { _logger?.Invoke($"Error forwarding debuggee output: {ex.Message}"); }
 		}
 	}
 
@@ -175,7 +222,8 @@ public partial class ManagedDebugger
 				await DiagnosticClientHelper.DiagnosticClientResumeRuntime(launchedProcessId);
 				break;
 			case SessionState.LaunchRequested { LaunchInfo: var launchInfo }:
-				await PerformLaunch(launchInfo);
+				if (_noDebug) PerformLaunchWithoutDebugging(launchInfo);
+				else await PerformLaunch(launchInfo);
 				break;
 			case SessionState.RemoteAttachRequested { RemoteAttachInfo: var remoteAttachInfo }:
 				PerformRemoteAttach(remoteAttachInfo);

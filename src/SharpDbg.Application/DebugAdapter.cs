@@ -479,7 +479,8 @@ public class DebugAdapter : IDapRequestHandler
 				Cwd = cwd,
 				Env = env,
 				StopAtEntry = stopAtEntry,
-				LaunchRequestConsoleType = launchRequestConsoleType.Value
+				LaunchRequestConsoleType = launchRequestConsoleType.Value,
+				NoDebug = arguments.NoDebug ?? false
 			};
 
 			_lastLaunchInfo = launchInfo;

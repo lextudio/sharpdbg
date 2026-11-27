@@ -21,11 +21,13 @@ public partial class ManagedDebugger
 	private ICorDebugProcess? CorProcess => _session is SessionState.Debugging debugging ? debugging.Process : null;
 
 	/// <summary>The debuggee's process id, for the <c>$pid</c> pseudo-variable.</summary>
-	public int? ProcessId => _attachedProcessId ?? CorProcess?.Id;
+	public int? ProcessId => _attachedProcessId ?? _noDebugProcess?.Id ?? CorProcess?.Id;
 
 	private string? _debuggerLibraryDirectory;
 	private bool _continueStoppedProcess;
 	private int? _attachedProcessId;
+	private bool _noDebug;
+	private Process? _noDebugProcess;
 	private Func<ICorDebug>? _pendingInProcessFactory;
 	private Action? _pendingInProcessReady;
 

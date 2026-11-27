@@ -3,6 +3,8 @@ namespace SharpDbg.Infrastructure.Debugger.Models;
 public class LaunchInfo
 {
 	public required LaunchRequestConsoleType LaunchRequestConsoleType { get; set; }
+	/// <summary>Run Without Debugging: start the process and stream its output, but never attach the debugger.</summary>
+	public bool NoDebug { get; set; }
 	public required string? Cwd { get; set; }
 	public required string Program { get; set; }
 	public required bool StopAtEntry { get; set; }
