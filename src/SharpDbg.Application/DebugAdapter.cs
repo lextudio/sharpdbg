@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Ardalis.GuardClauses;
@@ -98,7 +99,10 @@ public class DebugAdapter : IDapRequestHandler
 		Connection.RegisterRequest<VsCustomMessageArguments>();
 	}
 
-	public ValueTask<DapResponse> HandleRequestAsync(IDapRequest request, DapRequestContext context) => request switch
+	public ValueTask<DapResponse> HandleRequestAsync(IDapRequest request, DapRequestContext context)
+		=> TrackRequestAsync(request.Command, HandleRequestCoreAsync(request, context));
+
+	private ValueTask<DapResponse> HandleRequestCoreAsync(IDapRequest request, DapRequestContext context) => request switch
 	{
 		InitializeArguments args => Respond(args, a => HandleInitialize(a, context)),
 		LaunchArguments args => Respond(args, HandleLaunchAsync),
@@ -129,6 +133,63 @@ public class DebugAdapter : IDapRequestHandler
 		_ => NotSupported(request),
 	};
 
+	// A request that never answers otherwise leaves nothing in the log. This watchdog runs on a dedicated thread, so it
+	// still reports when the thread pool is starved, with the request's phase and the pool's counters.
+	private sealed class InFlightRequest(string command)
+	{
+		public readonly string Command = command;
+		public readonly System.Diagnostics.Stopwatch Watch = System.Diagnostics.Stopwatch.StartNew();
+		public volatile string Phase = "dispatching";
+		public double NextReportSeconds = 5;
+	}
+
+	private readonly ConcurrentDictionary<InFlightRequest, byte> _inFlight = new();
+	private readonly AsyncLocal<InFlightRequest?> _currentRequest = new();
+	private volatile InFlightRequest? _lockHolder;
+	private System.Threading.Thread? _requestWatchdog;
+
+	private void StartRequestWatchdog()
+	{
+		if (_requestWatchdog is not null || _logger is null) return;
+		var watchdog = new System.Threading.Thread(WatchRequests) { IsBackground = true, Name = "SharpDbg request watchdog" };
+		if (Interlocked.CompareExchange(ref _requestWatchdog, watchdog, null) is null) watchdog.Start();
+	}
+
+	private void WatchRequests()
+	{
+		while (true)
+		{
+			System.Threading.Thread.Sleep(1000);
+			foreach (var request in _inFlight.Keys)
+			{
+				var seconds = request.Watch.Elapsed.TotalSeconds;
+				if (seconds < request.NextReportSeconds) continue;
+				request.NextReportSeconds = seconds + 10;
+				var holder = _lockHolder;
+				_logger?.Invoke($"DAP request {request.Command} still running after {seconds:0}s: {request.Phase}; lock held by "
+					+ (holder is null ? "no request (free, or a runtime event)" : holder == request ? "this request" : $"{holder.Command} ({holder.Phase}, {holder.Watch.Elapsed.TotalSeconds:0}s)")
+					+ $"; thread pool {ThreadPool.ThreadCount} threads, {ThreadPool.PendingWorkItemCount} queued");
+			}
+		}
+	}
+
+	private async ValueTask<DapResponse> TrackRequestAsync(string command, ValueTask<DapResponse> pending)
+	{
+		_logger?.Invoke("DAP request: " + command);
+		StartRequestWatchdog();
+		var inFlight = new InFlightRequest(command);
+		_inFlight.TryAdd(inFlight, 0);
+		_currentRequest.Value = inFlight;
+		try
+		{
+			return await pending;
+		}
+		finally
+		{
+			_inFlight.TryRemove(inFlight, out _);
+		}
+	}
+
 	/// <summary>
 	/// Runs <paramref name="func"/> while holding the debugger's request/runtime-event lock, converting any exception
 	/// thrown by the debugger engine into an error response.
@@ -142,10 +203,22 @@ public class DebugAdapter : IDapRequestHandler
 	{
 		try
 		{
+			var request = _currentRequest.Value;
+			if (request is not null) request.Phase = "waiting for the request/runtime-event lock";
 			using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
 			{
-				await _debugger.DrainRuntimeEventQueue();
-				return await func().ConfigureAwait(false);
+				_lockHolder = request;
+				if (request is not null) request.Phase = "draining queued runtime events";
+				try
+				{
+					await _debugger.DrainRuntimeEventQueue();
+					if (request is not null) request.Phase = "running the handler";
+					return await func().ConfigureAwait(false);
+				}
+				finally
+				{
+					if (_lockHolder == request) _lockHolder = null;
+				}
 			}
 		}
 		catch (Exception ex)
