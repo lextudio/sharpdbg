@@ -19,6 +19,9 @@ public partial class ManagedDebugger
 	private SessionState _session = SessionState.NotStarted.Instance;
 	// Null unless a process is being debugged
 	private ICorDebugProcess? CorProcess => _session is SessionState.Debugging debugging ? debugging.Process : null;
+
+	/// <summary>The debuggee's process id, for the <c>$pid</c> pseudo-variable.</summary>
+	public int? ProcessId => CorProcess?.Id;
 	internal RunState _run = RunState.Running.Instance;
 	private readonly CorDebugManagedCallback _callbacks;
 	private readonly BreakpointManager _breakpointManager;
