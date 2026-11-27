@@ -527,7 +527,8 @@ public class DebugAdapter : IDapRequestHandler
 					Message = bp.Message,
 					Source = new Source
 					{
-						Path = bp.FilePath
+						Path = bp.FilePath,
+						Checksums = ComputeSourceChecksums(bp.FilePath)
 					}
 				}).ToList()
 			};
@@ -688,6 +689,20 @@ public class DebugAdapter : IDapRequestHandler
 		});
 	}
 
+	private static IReadOnlyList<Checksum>? ComputeSourceChecksums(string? filePath)
+	{
+		try
+		{
+			if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return null;
+			var hash = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(filePath));
+			return [new Checksum { Algorithm = ChecksumAlgorithm.SHA256, ChecksumValue = Convert.ToHexString(hash) }];
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
 	private DapStackFrame ToProtocolStackFrame(StackFrameInfo frame)
 	{
 		var protocolFrame = new DapStackFrame
@@ -698,7 +713,7 @@ public class DebugAdapter : IDapRequestHandler
 			EndLine = frame.EndLine is int endLine ? ConvertDebuggerLineToClient(endLine) : null,
 			Column = ConvertDebuggerColumnToClient(frame.Column),
 			EndColumn = frame.EndColumn is int endColumn ? ConvertDebuggerColumnToClient(endColumn) : null,
-			Source = frame.Source is not null ? new Source { Path = frame.Source, Name = Path.GetFileName(frame.Source), SourceReference = 0 } : null,
+			Source = frame.Source is not null ? new Source { Path = frame.Source, Name = Path.GetFileName(frame.Source), SourceReference = 0, Checksums = ComputeSourceChecksums(frame.Source) } : null,
 			PresentationHint = frame.IsUserCode ? null : (DapStackFrame.PresentationHintValue?)DapStackFrame.PresentationHintValue.Subtle
 		};
 		protocolFrame.IsResolved = frame.IsResolved;
