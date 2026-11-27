@@ -115,6 +115,7 @@ public class DebugAdapter : IDapRequestHandler
 		SetExceptionBreakpointsArguments args => Respond(args, HandleSetExceptionBreakpointsAsync),
 		ThreadsArguments args => Respond(args, HandleThreadsAsync),
 		ModulesArguments args => Respond(args, HandleModulesAsync),
+		SourceArguments args => Respond(args, HandleSourceAsync),
 		StackTraceArguments args => Respond(args, HandleStackTraceAsync),
 		ResolveStackFrameArguments args => Respond(args, HandleResolveStackFrameAsync),
 		ApplyDeltasArguments args => Respond(args, HandleApplyDeltasAsync),
@@ -914,6 +915,21 @@ public class DebugAdapter : IDapRequestHandler
 		});
 	}
 
+	private ValueTask<DapResult<SourceResponse>> HandleSourceAsync(SourceArguments arguments)
+	{
+		return RunLocked<SourceResponse>("Failed to get source", () =>
+		{
+			// An embedded source takes precedence: the file may not exist on disk.
+			if (arguments.SourceReference is > 0 && _debugger.TryGetEmbeddedSourceText(arguments.SourceReference, out var embedded))
+				return new SourceResponse { Content = embedded, MimeType = "text/x-csharp" };
+
+			var path = arguments.Source?.Path;
+			if (string.IsNullOrEmpty(path) || !File.Exists(path))
+				return new DapError($"Source not found: {path ?? $"(sourceReference {arguments.SourceReference})"}");
+			return new SourceResponse { Content = File.ReadAllText(path), MimeType = "text/x-csharp" };
+		});
+	}
+
 	private ValueTask<DapResult<StackTraceResponse>> HandleStackTraceAsync(StackTraceArguments arguments)
 	{
 		return RunLocked<StackTraceResponse>("Failed to get stack trace", () =>
@@ -961,7 +977,7 @@ public class DebugAdapter : IDapRequestHandler
 			EndLine = frame.EndLine is int endLine ? ConvertDebuggerLineToClient(endLine) : null,
 			Column = ConvertDebuggerColumnToClient(frame.Column),
 			EndColumn = frame.EndColumn is int endColumn ? ConvertDebuggerColumnToClient(endColumn) : null,
-			Source = frame.Source is not null ? new Source { Path = frame.Source, Name = Path.GetFileName(frame.Source), SourceReference = 0, Checksums = ComputeSourceChecksums(frame.Source) } : null,
+			Source = frame.Source is not null ? new Source { Path = frame.Source, Name = Path.GetFileName(frame.Source), SourceReference = frame.SourceReference, Checksums = ComputeSourceChecksums(frame.Source) } : null,
 			InstructionPointerReference = frame.InstructionPointerReference,
 			PresentationHint = frame.IsUserCode ? null : (DapStackFrame.PresentationHintValue?)DapStackFrame.PresentationHintValue.Subtle
 		};

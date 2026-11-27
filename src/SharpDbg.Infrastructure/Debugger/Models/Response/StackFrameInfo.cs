@@ -11,6 +11,8 @@ public class StackFrameInfo
 	public required string? Source { get; set; }
 	/// <summary>The IL offset a disassembler can use, for the DAP stack frame's instructionPointerReference.</summary>
 	public string? InstructionPointerReference { get; set; }
+	/// <summary>The sourceReference the source request must use for an embedded source, or 0.</summary>
+	public int SourceReference { get; set; }
 	public required bool IsUserCode { get; set; }
 	public required bool IsResolved { get; set; }
 	public required DecompiledSourceInfo? DecompiledSourceInfo { get; set; }
