@@ -34,6 +34,7 @@ public sealed class DebugProtocolHost : IDisposable
 		RecordEvents<LoadedSourceEvent>();
 		RecordEvents<ProcessEvent>();
 		RecordEvents<CapabilitiesEvent>();
+		RecordEvents<SharpDbg.Application.Protocol.SymbolsNeededEvent>();
 		RecordEvents<ProgressStartEvent>();
 		RecordEvents<ProgressUpdateEvent>();
 		RecordEvents<ProgressEndEvent>();

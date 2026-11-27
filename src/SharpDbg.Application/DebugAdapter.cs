@@ -76,6 +76,7 @@ public class DebugAdapter : IDapRequestHandler
 		Connection = new DapConnection(input, output, this, new DapConnectionOptions { Log = _logger });
 		Connection.RegisterRequest<ResolveStackFrameArguments>();
 		Connection.RegisterRequest<ApplyDeltasArguments>();
+		Connection.RegisterRequest<LoadSymbolsArguments>();
 		Connection.RegisterRequest<VsCustomMessageArguments>();
 	}
 
@@ -92,6 +93,8 @@ public class DebugAdapter : IDapRequestHandler
 		StackTraceArguments args => Respond(args, HandleStackTraceAsync),
 		ResolveStackFrameArguments args => Respond(args, HandleResolveStackFrameAsync),
 		ApplyDeltasArguments args => Respond(args, HandleApplyDeltasAsync),
+		// Not under the request lock: the thread that asked for symbols holds it while it waits for this answer.
+		LoadSymbolsArguments args => Respond(args, HandleLoadSymbols),
 		ScopesArguments args => Respond(args, HandleScopesAsync),
 		VariablesArguments args => Respond(args, HandleVariablesAsync),
 		EvaluateArguments args => Respond(args, HandleEvaluateAsync),
@@ -245,6 +248,15 @@ public class DebugAdapter : IDapRequestHandler
 			});
 		};
 
+		_debugger.OnSymbolsNeeded += (name, path, mvid) =>
+		{
+			Connection.SendEvent(new SymbolsNeededEvent
+			{
+				ModuleName = name,
+				ModulePath = path,
+				Mvid = mvid.ToString()
+			});
+		};
 		_debugger.OnModuleLoaded += (id, name, path) =>
 		{
 			Connection.SendEvent(new ModuleEvent
@@ -358,6 +370,8 @@ public class DebugAdapter : IDapRequestHandler
 			SupportsExceptionFilterOptions = true,
 			SupportsStepInTargetsRequest = false,
 			SupportsGotoTargetsRequest = false,
+			// SharpDbg-specific: launch/attach decompileExternalCode, the symbolsNeeded event and the loadSymbols request.
+			AdditionalProperties = new JsonObject { ["supportsClientSymbols"] = true },
 			ExceptionBreakpointFilters =
 			[
 				new ExceptionBreakpointsFilter { Filter = "all", Label = "All Exceptions", Default = false },
@@ -383,6 +397,10 @@ public class DebugAdapter : IDapRequestHandler
 			var stopAtEntry = GetConfigValue<bool?>(config, "stopAtEntry") ?? false;
 			var justMyCode = GetConfigValue<bool?>(config, "justMyCode") ?? true;
 			_debugger.EnableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
+			_debugger.DecompileExternalCode = GetConfigValue<bool?>(config, "decompileExternalCode") ?? true;
+			_debugger.ClientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
+				? TimeSpan.FromMilliseconds(timeoutMs)
+				: ManagedDebugger.DefaultClientSymbolsTimeout;
 			var console = GetConfigValue<string>(config, "console");
 			LaunchRequestConsoleType? launchRequestConsoleType = console switch
 			{
@@ -447,6 +465,10 @@ public class DebugAdapter : IDapRequestHandler
 			}
 			var justMyCode = GetConfigValue<bool?>(config, "justMyCode") ?? true;
 			_debugger.EnableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
+			_debugger.DecompileExternalCode = GetConfigValue<bool?>(config, "decompileExternalCode") ?? true;
+			_debugger.ClientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
+				? TimeSpan.FromMilliseconds(timeoutMs)
+				: ManagedDebugger.DefaultClientSymbolsTimeout;
 			if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode);
 			else _debugger.AttachRemote(remoteAttachInfo, justMyCode);
 			return new AttachResponse();
@@ -623,6 +645,15 @@ public class DebugAdapter : IDapRequestHandler
 		});
 	}
 
+	private DapResult<LoadSymbolsResponse> HandleLoadSymbols(LoadSymbolsArguments arguments)
+	{
+		if (!Guid.TryParse(arguments.Mvid, out var mvid))
+			return new DapError("loadSymbols needs the module's 'mvid'");
+		_logger?.Invoke($"loadSymbols: {mvid} -> {(string.IsNullOrEmpty(arguments.PdbPath) ? "(none)" : arguments.PdbPath)}");
+		_debugger.ProvideSymbols(mvid, arguments.PdbPath);
+		return new LoadSymbolsResponse { Accepted = true };
+	}
+
 	private ValueTask<DapResult<StackTraceResponse>> HandleStackTraceAsync(StackTraceArguments arguments)
 	{
 		return RunLocked<StackTraceResponse>("Failed to get stack trace", () =>
@@ -637,9 +668,11 @@ public class DebugAdapter : IDapRequestHandler
 
 	private ValueTask<DapResult<ResolveStackFrameResponse>> HandleResolveStackFrameAsync(ResolveStackFrameArguments arguments)
 	{
-		return RunLocked<ResolveStackFrameResponse>("Failed to resolve stack frame", () =>
+		return RunLocked<ResolveStackFrameResponse>("Failed to resolve stack frame", async () =>
 		{
-			var frame = _debugger.ResolveStackFrame(arguments.StackFrameId);
+			// Not on the dispatch loop: resolving a module without symbols can wait for the client's loadSymbols answer,
+			// and the dispatch loop has to stay free to receive it.
+			var frame = await Task.Run(() => _debugger.ResolveStackFrame(arguments.StackFrameId));
 			return new ResolveStackFrameResponse { StackFrame = ToProtocolStackFrame(frame) };
 		});
 	}
@@ -757,6 +790,8 @@ public class DebugAdapter : IDapRequestHandler
 
 	private async ValueTask<DapResult<DisconnectResponse>> HandleDisconnectAsync(DisconnectArguments arguments, DapRequestContext context)
 	{
+		// A thread waiting for the client's symbols holds the lock: release it before teardown waits for the lock.
+		_debugger.CancelSymbolWaiters();
 		var result = await RunLocked<DisconnectResponse>("Failed to disconnect", () =>
 		{
 			_debugger.Disconnect(arguments.TerminateDebuggee ?? false);
@@ -768,6 +803,7 @@ public class DebugAdapter : IDapRequestHandler
 
 	private ValueTask<DapResult<TerminateResponse>> HandleTerminateAsync(TerminateArguments arguments)
 	{
+		_debugger.CancelSymbolWaiters();
 		return RunLocked<TerminateResponse>("Failed to terminate", () =>
 		{
 			_debugger.Terminate();

@@ -69,16 +69,16 @@ public static partial class TestHelper
 		return debugProtocolHost;
 	}
 
-	public static DebugProtocolHost WithAttachRequest(this DebugProtocolHost debugProtocolHost, int debuggableProcessId, bool justMyCode = true)
+	public static DebugProtocolHost WithAttachRequest(this DebugProtocolHost debugProtocolHost, int debuggableProcessId, bool justMyCode = true, bool decompileExternalCode = true, int? clientSymbolsTimeoutMs = null)
 	{
-		var attachRequest = DebugAdapterProcessHelper.GetAttachRequest(debuggableProcessId, justMyCode);
+		var attachRequest = DebugAdapterProcessHelper.GetAttachRequest(debuggableProcessId, justMyCode, decompileExternalCode, clientSymbolsTimeoutMs);
 		debugProtocolHost.SendRequestSync(attachRequest);
 		return debugProtocolHost;
 	}
 
-	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, bool stopAtEntry, bool justMyCode)
+	public static DebugProtocolHost WithLaunchRequest(this DebugProtocolHost debugProtocolHost, string program, bool stopAtEntry, bool justMyCode, bool noDebug = false)
 	{
-		debugProtocolHost.SendRequestSync(DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry, justMyCode));
+		debugProtocolHost.SendRequestSync(DebugAdapterProcessHelper.GetLaunchRequest(program, stopAtEntry, justMyCode, noDebug));
 		return debugProtocolHost;
 	}
 	public static async Task<DebugProtocolHost> WaitForInitializedEvent(this DebugProtocolHost debugProtocolHost)

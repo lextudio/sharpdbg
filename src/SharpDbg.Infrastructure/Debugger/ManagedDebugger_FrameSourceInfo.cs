@@ -94,6 +94,9 @@ public partial class ManagedDebugger
 
 	private bool GetCachedOrGeneratePdb(ModuleInfo moduleInfo)
 	{
+		// The client decides whether and how a module without a PDB gets symbols (see ManagedDebugger_ClientSymbols.cs)
+		if (!DecompileExternalCode) return TryGetClientSymbols(moduleInfo);
+
 		var sharpIdeSymbolCachePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp", "SharpIdeSymbolCache");
 		var metadataImport = moduleInfo.Module.GetMetaDataInterface<IMetaDataImport>();
 		var mvid = metadataImport.ScopeProps.pmvid;
