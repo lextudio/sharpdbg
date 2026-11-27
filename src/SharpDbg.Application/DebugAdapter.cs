@@ -96,6 +96,7 @@ public class DebugAdapter : IDapRequestHandler
 		Connection.RegisterRequest<ResolveStackFrameArguments>();
 		Connection.RegisterRequest<ApplyDeltasArguments>();
 		Connection.RegisterRequest<LoadSymbolsArguments>();
+		Connection.RegisterRequest<SourceLinkArguments>();
 		Connection.RegisterRequest<VsCustomMessageArguments>();
 	}
 
@@ -121,6 +122,7 @@ public class DebugAdapter : IDapRequestHandler
 		ApplyDeltasArguments args => Respond(args, HandleApplyDeltasAsync),
 		// Not under the request lock: the thread that asked for symbols holds it while it waits for this answer.
 		LoadSymbolsArguments args => Respond(args, HandleLoadSymbols),
+		SourceLinkArguments args => Respond(args, HandleSourceLink),
 		ScopesArguments args => Respond(args, HandleScopesAsync),
 		VariablesArguments args => Respond(args, HandleVariablesAsync),
 		SetVariableArguments args => Respond(args, HandleSetVariableAsync),
@@ -965,6 +967,12 @@ public class DebugAdapter : IDapRequestHandler
 		{
 			return null;
 		}
+	}
+
+	private ValueTask<DapResult<SourceLinkResponse>> HandleSourceLink(SourceLinkArguments arguments)
+	{
+		return RunLocked<SourceLinkResponse>("Failed to get the SourceLink URL", () =>
+			new SourceLinkResponse { Url = _debugger.GetSourceLinkUrl(arguments.Path) });
 	}
 
 	private DapStackFrame ToProtocolStackFrame(StackFrameInfo frame)

@@ -5,9 +5,14 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- Kept a separate fixture so embedding sources cannot perturb the other tests' PDBs. -->
+    <!-- Kept a separate fixture so embedding sources and SourceLink cannot perturb the other tests' PDBs. -->
     <EmbedAllSources>true</EmbedAllSources>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
 
 </Project>
