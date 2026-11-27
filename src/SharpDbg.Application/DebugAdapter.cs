@@ -114,6 +114,7 @@ public class DebugAdapter : IDapRequestHandler
 		SetFunctionBreakpointsArguments args => Respond(args, HandleSetFunctionBreakpointsAsync),
 		SetExceptionBreakpointsArguments args => Respond(args, HandleSetExceptionBreakpointsAsync),
 		ThreadsArguments args => Respond(args, HandleThreadsAsync),
+		ModulesArguments args => Respond(args, HandleModulesAsync),
 		StackTraceArguments args => Respond(args, HandleStackTraceAsync),
 		ResolveStackFrameArguments args => Respond(args, HandleResolveStackFrameAsync),
 		ApplyDeltasArguments args => Respond(args, HandleApplyDeltasAsync),
@@ -889,6 +890,28 @@ public class DebugAdapter : IDapRequestHandler
 		_logger?.Invoke($"loadSymbols: {mvid} -> {(string.IsNullOrEmpty(arguments.PdbPath) ? "(none)" : arguments.PdbPath)}");
 		_debugger.ProvideSymbols(mvid, arguments.PdbPath);
 		return new LoadSymbolsResponse { Accepted = true };
+	}
+
+	private ValueTask<DapResult<ModulesResponse>> HandleModulesAsync(ModulesArguments arguments)
+	{
+		return RunLocked<ModulesResponse>("Failed to get modules", () =>
+		{
+			var modules = _debugger.GetModules();
+			var start = Math.Max(arguments.StartModule ?? 0, 0);
+			var count = arguments.ModuleCount is > 0 ? arguments.ModuleCount.Value : modules.Count;
+			return new ModulesResponse
+			{
+				TotalModules = modules.Count,
+				Modules = modules.Skip(start).Take(count).Select(module => new Module
+				{
+					Id = module.Id,
+					Name = module.Name,
+					Path = module.Path,
+					IsUserCode = module.IsUserCode,
+					SymbolStatus = module.HasSymbols ? "Symbols Loaded" : "Symbols not found"
+				}).ToList()
+			};
+		});
 	}
 
 	private ValueTask<DapResult<StackTraceResponse>> HandleStackTraceAsync(StackTraceArguments arguments)
