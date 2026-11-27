@@ -714,6 +714,7 @@ public class DebugAdapter : IDapRequestHandler
 			Column = ConvertDebuggerColumnToClient(frame.Column),
 			EndColumn = frame.EndColumn is int endColumn ? ConvertDebuggerColumnToClient(endColumn) : null,
 			Source = frame.Source is not null ? new Source { Path = frame.Source, Name = Path.GetFileName(frame.Source), SourceReference = 0, Checksums = ComputeSourceChecksums(frame.Source) } : null,
+			InstructionPointerReference = frame.InstructionPointerReference,
 			PresentationHint = frame.IsUserCode ? null : (DapStackFrame.PresentationHintValue?)DapStackFrame.PresentationHintValue.Subtle
 		};
 		protocolFrame.IsResolved = frame.IsResolved;
@@ -748,7 +749,8 @@ public class DebugAdapter : IDapRequestHandler
 					Value = v.Value,
 					Type = v.Type,
 					PresentationHint = v.PresentationHint?.ToDto(),
-					VariablesReference = v.VariablesReference
+					VariablesReference = v.VariablesReference,
+					MemoryReference = v.MemoryReference
 				}).ToList()
 			};
 		});

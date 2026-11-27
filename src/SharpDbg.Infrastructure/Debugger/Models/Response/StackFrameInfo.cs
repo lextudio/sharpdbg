@@ -9,6 +9,8 @@ public class StackFrameInfo
 	public required int Column { get; set; }
 	public required int? EndColumn { get; set; }
 	public required string? Source { get; set; }
+	/// <summary>The IL offset a disassembler can use, for the DAP stack frame's instructionPointerReference.</summary>
+	public string? InstructionPointerReference { get; set; }
 	public required bool IsUserCode { get; set; }
 	public required bool IsResolved { get; set; }
 	public required DecompiledSourceInfo? DecompiledSourceInfo { get; set; }

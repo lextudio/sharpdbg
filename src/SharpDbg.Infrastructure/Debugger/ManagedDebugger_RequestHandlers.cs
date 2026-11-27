@@ -485,6 +485,7 @@ public partial class ManagedDebugger
 			// returns null if the function is not a state machine method
 			var kickoffMethodToken = module.MetadataReader.GetStateMachineKickoffMethodToken(function.Token);
 			stackFrameInfo.Name = GetMethodFormattedName(module, kickoffMethodToken ?? function.Token, ilFrame.TypeParameters);
+			stackFrameInfo.InstructionPointerReference = "0x" + function.Token + "+0x" + ilFrame.IP.pnOffset;
 			var sourceInfo = GetSourceInfoAtFrame(ilFrame, decompileIfNeeded);
 			stackFrameInfo.IsUserCode = module.IsUserCode;
 			stackFrameInfo.IsResolved = module.MetadataReader.HasSymbols;
