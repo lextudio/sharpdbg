@@ -18,11 +18,29 @@ namespace SharpDbg.Application;
 /// </summary>
 public class DebugAdapter : IDapRequestHandler
 {
-	private readonly ManagedDebugger _debugger;
+	private ManagedDebugger _debugger;
 	private readonly Action<string>? _logger;
 	private bool _clientLinesStartAt1 = true;
 	private bool _clientColumnsStartAt1 = true;
 	private int _shutdownRequested;
+
+	// The last launch/attach, replayed by a restart request.
+	private LaunchInfo? _lastLaunchInfo;
+	private bool _lastJustMyCode = true;
+	private int? _lastAttachProcessId;
+	private string? _lastAttachDebuggerLibraryDirectory;
+	private RemoteAttachInfo? _lastRemoteAttachInfo;
+	private bool _enableEditAndContinue;
+	private bool _decompileExternalCode = true;
+	private TimeSpan _clientSymbolsTimeout = ManagedDebugger.DefaultClientSymbolsTimeout;
+	private readonly Dictionary<string, SharpDbgBreakpointRequest[]> _sourceBreakpoints = new(StringComparer.Ordinal);
+	private SharpDbgFunctionBreakpointRequest[] _functionBreakpoints = [];
+	private IReadOnlyList<SharpDbgExceptionBreakpointRequest> _exceptionBreakpoints = [];
+	// The subscription whose events may reach the client; see SubscribeToDebuggerEvents.
+	private object? _debuggerEventToken;
+
+	/// <summary>Monotonically increases whenever a restart constructs a replacement debugger.</summary>
+	public int DebuggerGeneration { get; private set; } = 1;
 
 	/// <summary>
 	/// Raised once the debug session has ended (a disconnect request has been fully handled).
@@ -85,6 +103,7 @@ public class DebugAdapter : IDapRequestHandler
 		InitializeArguments args => Respond(args, a => HandleInitialize(a, context)),
 		LaunchArguments args => Respond(args, HandleLaunchAsync),
 		AttachArguments args => Respond(args, HandleAttachAsync),
+		RestartArguments args => Respond(args, HandleRestartAsync),
 		ConfigurationDoneArguments args => Respond(args, HandleConfigurationDoneAsync),
 		SetBreakpointsArguments args => Respond(args, HandleSetBreakpointsAsync),
 		SetFunctionBreakpointsArguments args => Respond(args, HandleSetFunctionBreakpointsAsync),
@@ -163,8 +182,17 @@ public class DebugAdapter : IDapRequestHandler
 
 	private void SubscribeToDebuggerEvents()
 	{
+		// A restart replaces the debugger while the old one is still winding down: killing its debuggee raises
+		// exited/terminated on it, which the client would take for the end of the whole session. Each subscription
+		// holds its own token and a restart withdraws the current one before it touches the old debugger, so
+		// nothing the old debugger raises from then on reaches the client.
+		var token = new object();
+		_debuggerEventToken = token;
+		bool IsCurrentDebugger() => ReferenceEquals(token, Volatile.Read(ref _debuggerEventToken));
+
 		_debugger.OnStopped += (threadId, reason) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new StoppedEvent
 			{
 				Reason = ConvertStopReason(reason),
@@ -175,6 +203,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnStopped2 += (threadId, filePath, line, column, reason, hitBreakpointIds) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new StoppedEvent
 			{
 				Reason = ConvertStopReason(reason),
@@ -193,6 +222,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnBreakpointChanged += (breakpoint, hitMessage) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new BreakpointEvent
 			{
 				Reason = BreakpointEvent.ReasonValue.Changed,
@@ -218,6 +248,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnContinued += (threadId) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ContinuedEvent
 			{
 				ThreadId = threadId,
@@ -227,6 +258,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnExited += exitCode =>
 		{
+			if (!IsCurrentDebugger()) return;
 			// exitCode will be null in the attach scenario, as we cannot obtain the exit code of the process we attached to
 			Connection.SendEvent(new ExitedEvent
 			{
@@ -236,11 +268,13 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnTerminated += () =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new TerminatedEvent());
 		};
 
 		_debugger.OnThreadStarted += threadId =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ThreadEvent
 			{
 				Reason = ThreadEvent.ReasonValue.Started,
@@ -250,6 +284,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnThreadExited += threadId =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ThreadEvent
 			{
 				Reason = ThreadEvent.ReasonValue.Exited,
@@ -259,6 +294,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnSymbolsNeeded += (name, path, mvid) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new SymbolsNeededEvent
 			{
 				ModuleName = name,
@@ -268,6 +304,7 @@ public class DebugAdapter : IDapRequestHandler
 		};
 		_debugger.OnModuleLoaded += (id, name, path) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ModuleEvent
 			{
 				Reason = ModuleEvent.ReasonValue.New,
@@ -281,6 +318,7 @@ public class DebugAdapter : IDapRequestHandler
 		};
 		_debugger.OnModuleUnloaded += (id, name, path) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ModuleEvent
 			{
 				Reason = ModuleEvent.ReasonValue.Removed,
@@ -295,6 +333,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnProcessStarted += (processId, name) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ProcessEvent
 			{
 				Name = name,
@@ -306,6 +345,7 @@ public class DebugAdapter : IDapRequestHandler
 
 		_debugger.OnOutput += (output, isStdError) =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new OutputEvent
 			{
 				Category = isStdError ? OutputEvent.CategoryValue.Stderr : OutputEvent.CategoryValue.Stdout,
@@ -314,6 +354,7 @@ public class DebugAdapter : IDapRequestHandler
 		};
 		_debugger.OnImportantOutput += output =>
 		{
+			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new OutputEvent
 			{
 				Category = OutputEvent.CategoryValue.Important,
@@ -322,6 +363,7 @@ public class DebugAdapter : IDapRequestHandler
 		};
 		_debugger.SendRunInTerminalRequest += launchInfo =>
 		{
+			if (!IsCurrentDebugger()) return 0;
 			var programForTitle = launchInfo.Program is "dotnet" ? launchInfo.Arguments[0] : launchInfo.Program;
 			var runInTerminalArguments = new RunInTerminalArguments
 			{
@@ -379,6 +421,7 @@ public class DebugAdapter : IDapRequestHandler
 			SupportsExceptionFilterOptions = true,
 			SupportsStepInTargetsRequest = false,
 			SupportsGotoTargetsRequest = false,
+			SupportsRestartRequest = true,
 			// SharpDbg-specific: launch/attach decompileExternalCode, the symbolsNeeded event and the loadSymbols request.
 			AdditionalProperties = new JsonObject { ["supportsClientSymbols"] = true },
 			ExceptionBreakpointFilters =
@@ -405,11 +448,14 @@ public class DebugAdapter : IDapRequestHandler
 			var env = GetConfigValue<Dictionary<string, string>>(config, "env") ?? [];
 			var stopAtEntry = GetConfigValue<bool?>(config, "stopAtEntry") ?? false;
 			var justMyCode = GetConfigValue<bool?>(config, "justMyCode") ?? true;
-			_debugger.EnableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
-			_debugger.DecompileExternalCode = GetConfigValue<bool?>(config, "decompileExternalCode") ?? true;
-			_debugger.ClientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
+			_enableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
+			_decompileExternalCode = GetConfigValue<bool?>(config, "decompileExternalCode") ?? true;
+			_clientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
 				? TimeSpan.FromMilliseconds(timeoutMs)
 				: ManagedDebugger.DefaultClientSymbolsTimeout;
+			_debugger.EnableEditAndContinue = _enableEditAndContinue;
+			_debugger.DecompileExternalCode = _decompileExternalCode;
+			_debugger.ClientSymbolsTimeout = _clientSymbolsTimeout;
 			ApplyExpressionEvaluationOptions(config);
 			var console = GetConfigValue<string>(config, "console");
 			LaunchRequestConsoleType? launchRequestConsoleType = console switch
@@ -436,6 +482,11 @@ public class DebugAdapter : IDapRequestHandler
 				LaunchRequestConsoleType = launchRequestConsoleType.Value
 			};
 
+			_lastLaunchInfo = launchInfo;
+			_lastJustMyCode = justMyCode;
+			_lastAttachProcessId = null;
+			_lastAttachDebuggerLibraryDirectory = null;
+			_lastRemoteAttachInfo = null;
 			_debugger.Launch(launchInfo, justMyCode);
 			return new LaunchResponse();
 		});
@@ -474,11 +525,14 @@ public class DebugAdapter : IDapRequestHandler
 				};
 			}
 			var justMyCode = GetConfigValue<bool?>(config, "justMyCode") ?? true;
-			_debugger.EnableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
-			_debugger.DecompileExternalCode = GetConfigValue<bool?>(config, "decompileExternalCode") ?? true;
-			_debugger.ClientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
+			_enableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
+			_decompileExternalCode = GetConfigValue<bool?>(config, "decompileExternalCode") ?? true;
+			_clientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
 				? TimeSpan.FromMilliseconds(timeoutMs)
 				: ManagedDebugger.DefaultClientSymbolsTimeout;
+			_debugger.EnableEditAndContinue = _enableEditAndContinue;
+			_debugger.DecompileExternalCode = _decompileExternalCode;
+			_debugger.ClientSymbolsTimeout = _clientSymbolsTimeout;
 			ApplyExpressionEvaluationOptions(config);
 			var debuggerLibraryDirectory = GetConfigValue<string>(config, "debuggerLibraryDirectory");
 			if (debuggerLibraryDirectory is not null && Directory.Exists(debuggerLibraryDirectory) is false)
@@ -486,10 +540,64 @@ public class DebugAdapter : IDapRequestHandler
 			var continueStoppedProcess = GetConfigValue<bool?>(config, "continueStoppedProcess") ?? false;
 			if (continueStoppedProcess && !OperatingSystem.IsMacOS())
 				return new DapError("Failed to attach: continueStoppedProcess is supported on macOS only");
+			_lastLaunchInfo = null;
+			_lastJustMyCode = justMyCode;
+			_lastAttachProcessId = remoteAttachInfo is null ? processId.Value : null;
+			_lastAttachDebuggerLibraryDirectory = remoteAttachInfo is null ? debuggerLibraryDirectory : null;
+			_lastRemoteAttachInfo = remoteAttachInfo;
 			if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode, debuggerLibraryDirectory, continueStoppedProcess);
 			else _debugger.AttachRemote(remoteAttachInfo, justMyCode);
 			return new AttachResponse();
 		});
+	}
+
+	private async ValueTask<DapResult<RestartResponse>> HandleRestartAsync(RestartArguments arguments)
+	{
+		try
+		{
+			_debugger.CancelSymbolWaiters();
+			using (await _debugger.DapRequestAndRuntimeEventLock.LockAsync())
+			{
+				// Before anything touches the old debugger: its exit callbacks must not end the client's session.
+				Volatile.Write(ref _debuggerEventToken, null);
+				await _debugger.DrainRuntimeEventQueue();
+				// A launch restart terminates the old debuggee; an attach restart only detaches.
+				_debugger.Disconnect(_lastLaunchInfo is not null);
+				_debugger = new ManagedDebugger(_logger);
+				DebuggerGeneration++;
+				_debugger.EnableEditAndContinue = _enableEditAndContinue;
+				_debugger.DecompileExternalCode = _decompileExternalCode;
+				_debugger.ClientSymbolsTimeout = _clientSymbolsTimeout;
+				SubscribeToDebuggerEvents();
+				if (_lastLaunchInfo is not null)
+					_debugger.Launch(_lastLaunchInfo, _lastJustMyCode);
+				else if (_lastAttachProcessId is int processId)
+					_debugger.Attach(processId, _lastJustMyCode, _lastAttachDebuggerLibraryDirectory);
+				else if (_lastRemoteAttachInfo is not null)
+					_debugger.AttachRemote(_lastRemoteAttachInfo, _lastJustMyCode);
+				else
+					throw new InvalidOperationException("There is no launch or attach to restart.");
+				ReapplyBreakpoints();
+				await _debugger.ConfigurationDone();
+			}
+			return new RestartResponse();
+		}
+		catch (Exception ex)
+		{
+			_logger?.Invoke($"HandleRestartRequestAsync failed: {ex.Message} , {ex}");
+			return new DapError($"Failed to restart: {ex.Message}");
+		}
+	}
+
+	/// <summary>Sets the breakpoints the client had before a restart on the new debugger, as the initial setBreakpoints round would.</summary>
+	private void ReapplyBreakpoints()
+	{
+		foreach (var (sourcePath, requests) in _sourceBreakpoints)
+			_debugger.SetBreakpoints(sourcePath, requests);
+		if (_functionBreakpoints.Length > 0)
+			_debugger.SetFunctionBreakpoints(_functionBreakpoints);
+		if (_exceptionBreakpoints.Count > 0)
+			_debugger.SetExceptionBreakpoints(_exceptionBreakpoints);
 	}
 
 	private ValueTask<DapResult<ConfigurationDoneResponse>> HandleConfigurationDoneAsync(ConfigurationDoneArguments arguments)
@@ -516,6 +624,7 @@ public class DebugAdapter : IDapRequestHandler
 				bp.HitCondition,
 				bp.Column is null ? null : ConvertClientColumnToDebugger(bp.Column.Value)))
 			.ToArray() ?? [];
+		_sourceBreakpoints[sourcePath] = breakpointRequests;
 
 		return RunLocked<SetBreakpointsResponse>("Failed to set breakpoints", () =>
 		{
@@ -544,6 +653,7 @@ public class DebugAdapter : IDapRequestHandler
 	private ValueTask<DapResult<SetFunctionBreakpointsResponse>> HandleSetFunctionBreakpointsAsync(SetFunctionBreakpointsArguments arguments)
 	{
 		var requests = arguments.Breakpoints.Select(bp => new SharpDbgFunctionBreakpointRequest(bp.Name, bp.Condition, bp.HitCondition)).ToArray();
+		_functionBreakpoints = requests;
 		return RunLocked<SetFunctionBreakpointsResponse>("Failed to set function breakpoints", () =>
 		{
 			var breakpoints = _debugger.SetFunctionBreakpoints(requests);
@@ -573,6 +683,7 @@ public class DebugAdapter : IDapRequestHandler
 			breakpointRequests.Add(new SharpDbgExceptionBreakpointRequest(parsedFilter, option.Condition));
 		}
 		_logger?.Invoke($"Exception breakpoints: {string.Join(", ", breakpointRequests)}");
+		_exceptionBreakpoints = breakpointRequests;
 
 		return RunLocked<SetExceptionBreakpointsResponse>("Failed to set exception breakpoints", () =>
 		{
