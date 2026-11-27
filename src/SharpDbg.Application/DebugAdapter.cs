@@ -24,6 +24,8 @@ public class DebugAdapter : IDapRequestHandler
 	private bool _clientLinesStartAt1 = true;
 	private bool _clientColumnsStartAt1 = true;
 	private int _shutdownRequested;
+	private readonly Dictionary<int, (string File, int Line, int? Column)> _gotoTargets = new();
+	private int _nextGotoTargetId;
 
 	// The last launch/attach, replayed by a restart request.
 	private LaunchInfo? _lastLaunchInfo;
@@ -117,6 +119,8 @@ public class DebugAdapter : IDapRequestHandler
 		ThreadsArguments args => Respond(args, HandleThreadsAsync),
 		ModulesArguments args => Respond(args, HandleModulesAsync),
 		SourceArguments args => Respond(args, HandleSourceAsync),
+		GotoTargetsArguments args => Respond(args, HandleGotoTargetsAsync),
+		GotoArguments args => Respond(args, a => HandleGotoAsync(a, context)),
 		StackTraceArguments args => Respond(args, HandleStackTraceAsync),
 		ResolveStackFrameArguments args => Respond(args, HandleResolveStackFrameAsync),
 		ApplyDeltasArguments args => Respond(args, HandleApplyDeltasAsync),
@@ -501,7 +505,7 @@ public class DebugAdapter : IDapRequestHandler
 			SupportsExceptionInfoRequest = true,
 			SupportsExceptionFilterOptions = true,
 			SupportsStepInTargetsRequest = false,
-			SupportsGotoTargetsRequest = false,
+			SupportsGotoTargetsRequest = true,
 			SupportsRestartRequest = true,
 			SupportsLoadedSourcesRequest = true,
 			SupportsBreakpointLocationsRequest = true,
@@ -825,6 +829,59 @@ public class DebugAdapter : IDapRequestHandler
 				Id = t.id,
 				Name = t.name
 			}).ToList()
+		});
+	}
+
+	private ValueTask<DapResult<GotoTargetsResponse>> HandleGotoTargetsAsync(GotoTargetsArguments arguments)
+	{
+		return RunLocked<GotoTargetsResponse>("Failed to get goto targets", () =>
+		{
+			if (arguments.Source.Path is not { } sourcePath)
+				return new DapError("Failed to get goto targets: Missing source path");
+
+			var line = ConvertClientLineToDebugger(arguments.Line);
+			var column = arguments.Column is int c ? ConvertClientColumnToDebugger(c) : (int?)null;
+			var targets = new List<GotoTarget>();
+			foreach (var target in _debugger.GetGotoTargets(sourcePath, line, column))
+			{
+				var id = ++_nextGotoTargetId;
+				_gotoTargets[id] = (sourcePath, target.Line, target.Column);
+				targets.Add(new GotoTarget
+				{
+					Id = id,
+					Label = $"{Path.GetFileName(sourcePath)}:{ConvertDebuggerLineToClient(target.Line)}",
+					Line = ConvertDebuggerLineToClient(target.Line),
+					Column = ConvertDebuggerColumnToClient(target.Column),
+					EndLine = ConvertDebuggerLineToClient(target.EndLine),
+					EndColumn = ConvertDebuggerColumnToClient(target.EndColumn)
+				});
+			}
+			return new GotoTargetsResponse { Targets = targets };
+		});
+	}
+
+	private ValueTask<DapResult<GotoResponse>> HandleGotoAsync(GotoArguments arguments, DapRequestContext context)
+	{
+		return RunLocked<GotoResponse>("Failed to set the next statement", () =>
+		{
+			if (!_gotoTargets.Remove(arguments.TargetId, out var target))
+				return new DapError($"Unknown goto target {arguments.TargetId}.");
+
+			var location = _debugger.SetNextStatement(arguments.ThreadId, target.File, target.Line, target.Column);
+			// The stop is reported after the response, as the protocol expects.
+			context.OnResponseSent(() => Connection.SendEvent(new StoppedEvent
+			{
+				Reason = StoppedEvent.ReasonValue.Goto,
+				ThreadId = arguments.ThreadId,
+				AllThreadsStopped = true,
+				AdditionalProperties = new JsonObject
+				{
+					["source"] = new JsonObject { ["path"] = target.File },
+					["line"] = ConvertDebuggerLineToClient(location.Line),
+					["column"] = ConvertDebuggerColumnToClient(location.Column)
+				}
+			}));
+			return new GotoResponse();
 		});
 	}
 
