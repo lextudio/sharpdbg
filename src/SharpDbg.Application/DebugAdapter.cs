@@ -136,6 +136,15 @@ public class DebugAdapter : IDapRequestHandler
 		}
 	}
 
+	private static void ApplyExpressionEvaluationOptions(JsonObject config)
+	{
+		ManagedDebugger.AllowToString = true;
+		ManagedDebugger.ShowRawValues = false;
+		if (config["expressionEvaluationOptions"] is not JsonObject options) return;
+		if (GetConfigValue<bool?>(options, "allowToString") is bool allowToString) ManagedDebugger.AllowToString = allowToString;
+		if (GetConfigValue<bool?>(options, "showRawValues") is bool showRawValues) ManagedDebugger.ShowRawValues = showRawValues;
+	}
+
 	private static T? GetConfigValue<T>(JsonObject? config, string key)
 	{
 		if (config?.TryGetPropertyValue(key, out var node) is true && node is not null)
@@ -401,6 +410,7 @@ public class DebugAdapter : IDapRequestHandler
 			_debugger.ClientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
 				? TimeSpan.FromMilliseconds(timeoutMs)
 				: ManagedDebugger.DefaultClientSymbolsTimeout;
+			ApplyExpressionEvaluationOptions(config);
 			var console = GetConfigValue<string>(config, "console");
 			LaunchRequestConsoleType? launchRequestConsoleType = console switch
 			{
@@ -469,6 +479,7 @@ public class DebugAdapter : IDapRequestHandler
 			_debugger.ClientSymbolsTimeout = GetConfigValue<int?>(config, "clientSymbolsTimeoutMs") is int timeoutMs && timeoutMs > 0
 				? TimeSpan.FromMilliseconds(timeoutMs)
 				: ManagedDebugger.DefaultClientSymbolsTimeout;
+			ApplyExpressionEvaluationOptions(config);
 			if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode);
 			else _debugger.AttachRemote(remoteAttachInfo, justMyCode);
 			return new AttachResponse();

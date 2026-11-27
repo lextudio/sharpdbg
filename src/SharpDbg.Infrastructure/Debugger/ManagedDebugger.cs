@@ -47,6 +47,12 @@ public partial class ManagedDebugger
 	/// </summary>
 	internal int ModuleSet_Version { get; private set; }
 	private bool _justMyCode;
+
+	/// <summary>Whether an object's overridden ToString() may be called for display (expressionEvaluationOptions.allowToString).</summary>
+	public static bool AllowToString { get; set; } = true;
+	/// <summary>Whether DebuggerDisplay/ToString are suppressed and the raw value is shown (expressionEvaluationOptions.showRawValues).</summary>
+	public static bool ShowRawValues { get; set; }
+
 	private EntryBreakpointState _entryBreakpoint = EntryBreakpointState.NotRequested.Instance;
 	private ICorDebugFunctionBreakpoint? EntryCorBreakpoint => (_entryBreakpoint as EntryBreakpointState.Bound)?.CorBreakpoint;
 

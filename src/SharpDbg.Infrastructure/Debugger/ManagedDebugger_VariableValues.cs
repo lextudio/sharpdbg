@@ -167,14 +167,14 @@ public partial class ManagedDebugger
 		{
 			return new(typeName, "", CorDebugValueFormatKind.AnonymousType, debugProxyTypeName);
 		}
-		if (hasDebuggerDisplayAttribute)
+		if (hasDebuggerDisplayAttribute && !ShowRawValues)
 		{
 			var (debuggerDisplayValue, debuggerDisplayName) = GetCustomAttributeCtorStringArgAndNamedArg(debuggerDisplayAttributePointer, debuggerDisplayAttributeSize, "Name");
 			// I prefer how Rider handles this - instead of overriding the actual name of the variable, just prefix the value with the name
 			if (debuggerDisplayName is not null) debuggerDisplayValue = $"{debuggerDisplayName} = {debuggerDisplayValue}";
 			return new(typeName, debuggerDisplayValue, CorDebugValueFormatKind.DebuggerDisplay, debugProxyTypeName);
 		}
-		if (corDebugObjectValue.ExactType.IsExceptionType())
+		if (corDebugObjectValue.ExactType.IsExceptionType() && AllowToString && !ShowRawValues)
 		{
 			return new(typeName, "", CorDebugValueFormatKind.ToString, debugProxyTypeName);
 		}
@@ -184,7 +184,7 @@ public partial class ManagedDebugger
 			var decimalString = GetDecimalValueString(corDebugObjectValue);
 			return new(typeName, decimalString, CorDebugValueFormatKind.None, null);
 		}
-		if (TypeOverridesToString(corDebugObjectValue.ExactType))
+		if (TypeOverridesToString(corDebugObjectValue.ExactType) && AllowToString && !ShowRawValues)
 		{
 			return new(typeName, "", CorDebugValueFormatKind.ToString, debugProxyTypeName);
 		}
