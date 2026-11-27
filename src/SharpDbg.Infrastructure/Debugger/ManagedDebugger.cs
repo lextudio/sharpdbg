@@ -21,7 +21,25 @@ public partial class ManagedDebugger
 	private ICorDebugProcess? CorProcess => _session is SessionState.Debugging debugging ? debugging.Process : null;
 
 	/// <summary>The debuggee's process id, for the <c>$pid</c> pseudo-variable.</summary>
-	public int? ProcessId => CorProcess?.Id;
+	public int? ProcessId => _attachedProcessId ?? CorProcess?.Id;
+
+	private string? _debuggerLibraryDirectory;
+	private bool _continueStoppedProcess;
+	private int? _attachedProcessId;
+	private Func<ICorDebug>? _pendingInProcessFactory;
+	private Action? _pendingInProcessReady;
+
+	private const int SIGCONT = 19; // macOS only; the attach request rejects continueStoppedProcess elsewhere
+
+	[DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+	private static extern int SendSignal(int pid, int signal);
+
+	private void ContinueStoppedProcess(int processId)
+	{
+		if (SendSignal(processId, SIGCONT) != 0)
+			throw new InvalidOperationException($"Could not continue stopped process {processId} (errno {Marshal.GetLastPInvokeError()})");
+		_logger?.Invoke($"Sent SIGCONT to process {processId}");
+	}
 	internal RunState _run = RunState.Running.Instance;
 	private readonly CorDebugManagedCallback _callbacks;
 	private readonly BreakpointManager _breakpointManager;
@@ -225,14 +243,22 @@ public partial class ManagedDebugger
 		_logger?.Invoke($"Attaching to process: {processId}");
 		_session = new SessionState.Attaching(processId);
 		// Register before returning, so a client that resumes the runtime once ConfigurationDone returns cannot do so before dbgshim is listening
-		ClrDebugExtensions.RuntimeStartupRegistration registration;
+		ClrDebugExtensions.RuntimeStartupRegistration? started = null;
 		try
 		{
-			registration = ClrDebugExtensions.RegisterForRuntimeStartup(processId);
+			started = ClrDebugExtensions.RegisterForRuntimeStartup(processId,
+				onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId), debuggerLibraryDirectory: _debuggerLibraryDirectory);
+			if (_continueStoppedProcess) ContinueStoppedProcess(processId);
 		}
 		catch (Exception ex)
 		{
+			// Nothing else answers the client for this request: end the session instead of leaving it "attaching".
+			// A registration made before a failing SIGCONT must be ended too, or its callback attaches later
+			started?.Dispose();
+			_session = SessionState.Ended.Instance;
 			_logger?.Invoke($"Error attaching to process {processId}: {ex}");
+			OnOutput?.Invoke($"Attach to process {processId} failed: {ex.Message}\n", true);
+			OnTerminated?.Invoke();
 			return;
 		}
 		// FinishAttach takes DapRequestAndRuntimeEventLock once attaching via dbgshim is complete. AsyncLock stores its re-entrant lock
@@ -240,7 +266,7 @@ public partial class ManagedDebugger
 		// FinishAttach cannot re-entrantly enter the lock this request holds
 		using (ExecutionContext.SuppressFlow())
 		{
-			_ = Task.Run(() => FinishAttach(processId, registration));
+			_ = Task.Run(() => FinishAttach(processId, started));
 		}
 	}
 
@@ -248,39 +274,48 @@ public partial class ManagedDebugger
 	{
 		try
 		{
-			ICorDebug corDebug;
 			using (registration)
 			{
-				corDebug = await registration.WaitForCorDebug();
-			}
-			using (await DapRequestAndRuntimeEventLock.LockAsync())
-			{
-				if (_session is not SessionState.Attaching)
-				{
-					_logger?.Invoke($"The session ended before the attach to process {processId} completed");
-					return;
-				}
-				AttachToProcess(corDebug, processId, debuggeeProcess: null);
+				await registration.WaitForCorDebug();
 			}
 		}
 		catch (Exception ex)
 		{
-			_logger?.Invoke($"Error attaching to process {processId}: {ex}");
+			// Nothing awaits this task: tell the client, or it shows a session that never attached as running
+			_logger?.Invoke($"Attach to process {processId} failed: {ex}");
+			OnOutput?.Invoke($"Attach to process {processId} failed: {ex.Message}\n", true);
+			OnTerminated?.Invoke();
+			return;
+		}
+		using (await DapRequestAndRuntimeEventLock.LockAsync())
+		{
+			if (_session is not SessionState.Debugging)
+			{
+				_logger?.Invoke($"The session ended before the attach to process {processId} completed");
+				return;
+			}
+			_logger?.Invoke($"Attached to process: {processId}");
+			var name = "";
+			try { name = Process.GetProcessById(processId).ProcessName; } catch { /* the process may have exited */ }
+			OnProcessStarted?.Invoke(processId, name);
+			SendAllBreakpointEvents();
 		}
 	}
 
-	/// <param name="debuggeeProcess">The process when the debugger started it</param>
-	private void AttachToProcess(ICorDebug corDebug, int processId, Process? debuggeeProcess)
+	/// <summary>
+	/// Runs inside the dbgshim runtime-startup callback, before the runtime is allowed to continue:
+	/// dbgshim releases the runtime as soon as this returns, so a host that loads its library quickly
+	/// could run user code before an attach done after an await
+	/// </summary>
+	private void AttachAtRuntimeStartup(ICorDebug corDebug, int processId, Process? debuggeeProcess = null)
 	{
+		_logger?.Invoke($"Runtime startup callback for process {processId}");
 		corDebug.Initialize();
 		corDebug.SetManagedHandler(_callbacks);
-
 		var process = corDebug.DebugActiveProcess(processId, false);
+		_attachedProcessId = processId;
 		_session = new SessionState.Debugging(corDebug, process, debuggeeProcess, IsRemote: false);
 		ConfigureExceptionCallbacks();
-
-		_logger?.Invoke($"Attached to process: {processId}");
-		SendAllBreakpointEvents();
 	}
 
 	private void PerformRemoteAttach(RemoteAttachInfo remoteAttachInfo)

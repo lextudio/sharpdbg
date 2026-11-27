@@ -78,9 +78,10 @@ public partial class ManagedDebugger
 
 		_logger?.Invoke($"Process created suspended with PID: {processId}");
 
-		var corDebug = await ClrDebugExtensions.Automatic(processId, resumeDiagnosticSuspension: true);
-		AttachToProcess(corDebug, processId, process);
+		await ClrDebugExtensions.Automatic(processId, resumeDiagnosticSuspension: true,
+			onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId, process));
 		OnProcessStarted?.Invoke(processId, launchInfo.Program);
+		SendAllBreakpointEvents();
 		return;
 
 		// The DataReceived callbacks run on background threads - a throwing subscriber (e.g. a disposed protocol layer) must not crash the adapter
@@ -125,12 +126,28 @@ public partial class ManagedDebugger
 	/// <summary>
 	/// Store process ID for later attach (actual attach happens in ConfigurationDone)
 	/// </summary>
-	public void Attach(int processId, bool justMyCode)
+	public void Attach(int processId, bool justMyCode, string? debuggerLibraryDirectory = null, bool continueStoppedProcess = false)
 	{
 		EnsureSessionNotStarted();
+		_debuggerLibraryDirectory = debuggerLibraryDirectory;
+		_continueStoppedProcess = continueStoppedProcess;
 		_logger?.Invoke($"Storing attach target: {processId}");
 		_justMyCode = justMyCode;
 		_entryBreakpoint = EntryBreakpointState.NotRequested.Instance;
+		_attachedProcessId = processId;
+		_session = new SessionState.AttachRequested(processId);
+	}
+
+	/// <summary>Attach from inside the debuggee's own process (the Android agent), using the ICorDebug it already has.</summary>
+	public void AttachInProcess(int processId, bool justMyCode, Func<ICorDebug> factory, Action? ready)
+	{
+		EnsureSessionNotStarted();
+		ArgumentNullException.ThrowIfNull(factory);
+		_justMyCode = justMyCode;
+		_entryBreakpoint = EntryBreakpointState.NotRequested.Instance;
+		_attachedProcessId = processId;
+		_pendingInProcessFactory = factory;
+		_pendingInProcessReady = ready;
 		_session = new SessionState.AttachRequested(processId);
 	}
 
@@ -162,6 +179,18 @@ public partial class ManagedDebugger
 				break;
 			case SessionState.RemoteAttachRequested { RemoteAttachInfo: var remoteAttachInfo }:
 				PerformRemoteAttach(remoteAttachInfo);
+				break;
+			case SessionState.AttachRequested { ProcessId: var processId } when _pendingInProcessFactory is not null:
+				try
+				{
+					AttachAtRuntimeStartup(_pendingInProcessFactory(), processId);
+				}
+				finally
+				{
+					_pendingInProcessFactory = null;
+					_pendingInProcessReady?.Invoke();
+					_pendingInProcessReady = null;
+				}
 				break;
 			case SessionState.AttachRequested { ProcessId: var processId }:
 				StartAttach(processId);

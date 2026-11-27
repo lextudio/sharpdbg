@@ -14,10 +14,26 @@ public static class ClrDebugExtensions
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	public static unsafe void OnRuntimeStartup(void* pCorDebug, void* parameter, int hr)
 	{
-		var corDebug = ComInterfaceMarshaller<ICorDebug>.ConvertToManaged(pCorDebug);
-		var runtimeStartupTcs = GCHandle.FromIntPtr((IntPtr)parameter).Target as TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>;
-		Guard.Against.Null(runtimeStartupTcs);
-		runtimeStartupTcs.SetResult((corDebug, hr));
+		var state = GCHandle.FromIntPtr((IntPtr)parameter).Target as RuntimeStartupState;
+		Guard.Against.Null(state);
+		try
+		{
+			var corDebug = ComInterfaceMarshaller<ICorDebug>.ConvertToManaged(pCorDebug);
+			// dbgshim lets the runtime continue as soon as this callback returns, so attaching has to happen here -
+			// attaching after an await raced the debuggee, which could load and run user code before any breakpoint was bound
+			if (corDebug is not null && hr >= 0) state.OnStartup?.Invoke(corDebug);
+			state.Tcs.TrySetResult((corDebug, hr));
+		}
+		catch (Exception ex)
+		{
+			state.Tcs.TrySetException(ex);
+		}
+	}
+
+	private sealed class RuntimeStartupState(Action<ICorDebug>? onStartup)
+	{
+		public TaskCompletionSource<(ICorDebug? CorDebug, int Hr)> Tcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public Action<ICorDebug>? OnStartup { get; } = onStartup;
 	}
 
 	public static ICorDebug Mobile(RemoteAttachInfo remoteAttachInfo)
@@ -36,9 +52,13 @@ public static class ClrDebugExtensions
 	}
 
 	/// pass resumeDiagnosticSuspension true if the process was launched with the DOTNET_DefaultDiagnosticPortSuspend environment variable, and you wish for it to be resumed after RegisterForRuntimeStartup
-	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false)
+	/// onStartup runs while the runtime is still blocked at startup - initialize, set the managed handler and DebugActiveProcess there
+	/// debuggerLibraryDirectory, when set, is where dbgshim loads mscordbi and the DAC from instead of the target runtime's directory -
+	/// an iOS simulator app ships simulator-platform copies that a macOS debugger process cannot load
+	public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false, Action<ICorDebug>? onStartup = null,
+		string? debuggerLibraryDirectory = null)
 	{
-		using var registration = RegisterForRuntimeStartup(pid);
+		using var registration = RegisterForRuntimeStartup(pid, onStartup, debuggerLibraryDirectory);
 		if (resumeDiagnosticSuspension) await DiagnosticClientHelper.DiagnosticClientResumeRuntime(pid);
 		return await registration.WaitForCorDebug().ConfigureAwait(false);
 	}
@@ -50,34 +70,61 @@ public static class ClrDebugExtensions
 	/// A process started with DOTNET_DefaultDiagnosticPortSuspend must only be resumed after this returns. If the runtime gets past its
 	/// startup notification while dbgshim is still registering, dbgshim can wait for a startup event that is never signalled
 	/// </remarks>
-	public static RuntimeStartupRegistration RegisterForRuntimeStartup(int pid)
+	public static RuntimeStartupRegistration RegisterForRuntimeStartup(int pid, Action<ICorDebug>? onStartup = null, string? debuggerLibraryDirectory = null)
 	{
-		var runtimeStartupTcs = new TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>(TaskCreationOptions.RunContinuationsAsynchronously);
-		var runtimeStartupTcsHandle = GCHandle.Alloc(runtimeStartupTcs);
+		IntPtr unregisterToken = IntPtr.Zero;
+		GCHandle runtimeStartupTcsHandle = default;
+		// Kept alive until the registration ends: dbgshim calls it back when the runtime starts
+		var libraryProvider = debuggerLibraryDirectory is null ? null : new DirectoryLibraryProvider(debuggerLibraryDirectory);
 		try
 		{
-			IntPtr unregisterToken;
+			/* If the process starts before GetStartupNotificationEvent inside RegisterForRuntimeStartup is called (e.g. because you were playing
+			 * in the debugger between launching the process and reaching this line of code) then WaitForSingleObject inside RegisterForRuntimeStartup
+			 * will hang indefinitely. You can prevent this by starting the process suspended.  In the Manual example, we call GetStartupNotificationEvent
+			 * ourselves, however in the Automatic example, RegisterForRuntimeStartup calls GetStartupNotificationEvent itself internally. In the latter scenario,
+			 * technically speaking there is the possibility of a race occurring even without us stepping in the debugger, but that's the risk you take when
+			 * you use RegisterForRuntimeStartup */
+
+			var state = new RuntimeStartupState(onStartup);
+			var runtimeStartupTcs = state.Tcs;
+			runtimeStartupTcsHandle = GCHandle.Alloc(state);
 			unsafe
 			{
-				var registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
+				var registerHr = libraryProvider is null
+					? DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken)
+					: DbgShim.RegisterForRuntimeStartup3(checked((uint)pid), null!, libraryProvider!, &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
 				Marshal.ThrowExceptionForHR(registerHr);
 			}
-			return new RuntimeStartupRegistration(runtimeStartupTcs.Task, unregisterToken, runtimeStartupTcsHandle);
+			return new RuntimeStartupRegistration(runtimeStartupTcs.Task, unregisterToken, runtimeStartupTcsHandle, pid, libraryProvider);
 		}
 		catch
 		{
-			runtimeStartupTcsHandle.Free();
+			if (unregisterToken != IntPtr.Zero) DbgShim.UnregisterForRuntimeStartup(unregisterToken);
+			if (runtimeStartupTcsHandle.IsAllocated) runtimeStartupTcsHandle.Free();
 			throw;
 		}
 	}
 
-	public sealed class RuntimeStartupRegistration(Task<(ICorDebug? CorDebug, int Hr)> runtimeStartup, IntPtr unregisterToken, GCHandle runtimeStartupTcsHandle) : IDisposable
+	public sealed class RuntimeStartupRegistration(Task<(ICorDebug? CorDebug, int Hr)> runtimeStartup, IntPtr unregisterToken, GCHandle runtimeStartupTcsHandle, int pid,
+		DirectoryLibraryProvider? libraryProvider) : IDisposable
 	{
 		private GCHandle _runtimeStartupTcsHandle = runtimeStartupTcsHandle;
 
 		public async Task<ICorDebug> WaitForCorDebug()
 		{
-			var (cordebug, hr) = await runtimeStartup.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+			// A suspended debuggee only starts its runtime once someone resumes it, and on a loaded machine that took
+			// longer than the fixed 5 seconds this used to allow. Wait for as long as the process is alive instead.
+			while (!runtimeStartup.IsCompleted)
+			{
+				try
+				{
+					await runtimeStartup.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+				}
+				catch (TimeoutException) when (DiagnosticClientHelper.IsProcessAlive(pid))
+				{
+				}
+			}
+			var (cordebug, hr) = await runtimeStartup.ConfigureAwait(false);
 			//if callbackHR was not S_OK, an error occurred while attempting to register for runtime startup
 			if (cordebug is null) throw new InvalidOperationException($"Attempting to register for runtime startup failed: {hr}");
 			return cordebug;
@@ -88,6 +135,7 @@ public static class ClrDebugExtensions
 			if (_runtimeStartupTcsHandle.IsAllocated is false) return;
 			if (unregisterToken != IntPtr.Zero) DbgShim.UnregisterForRuntimeStartup(unregisterToken);
 			_runtimeStartupTcsHandle.Free();
+			GC.KeepAlive(libraryProvider);
 		}
 	}
 

@@ -480,7 +480,13 @@ public class DebugAdapter : IDapRequestHandler
 				? TimeSpan.FromMilliseconds(timeoutMs)
 				: ManagedDebugger.DefaultClientSymbolsTimeout;
 			ApplyExpressionEvaluationOptions(config);
-			if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode);
+			var debuggerLibraryDirectory = GetConfigValue<string>(config, "debuggerLibraryDirectory");
+			if (debuggerLibraryDirectory is not null && Directory.Exists(debuggerLibraryDirectory) is false)
+				return new DapError($"Failed to attach: debuggerLibraryDirectory does not exist: {debuggerLibraryDirectory}");
+			var continueStoppedProcess = GetConfigValue<bool?>(config, "continueStoppedProcess") ?? false;
+			if (continueStoppedProcess && !OperatingSystem.IsMacOS())
+				return new DapError("Failed to attach: continueStoppedProcess is supported on macOS only");
+			if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode, debuggerLibraryDirectory, continueStoppedProcess);
 			else _debugger.AttachRemote(remoteAttachInfo, justMyCode);
 			return new AttachResponse();
 		});

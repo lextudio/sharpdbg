@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.3" />
+    <PackageReference Include="ICorDebugSharp" Version="0.1.9" />
+    <PackageReference Include="NeoSmart.AsyncLock" Version="3.2.1" />
+    <PackageReference Include="ICSharpCode.Decompiler" Version="11.2.0.10050" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0" />
+    <PackageReference Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.12.0" />
+    <ProjectReference Include="../../src/SharpDbg.Infrastructure/SharpDbg.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/SharpDbg.DapProtocol/SharpDbg.DapProtocol.csproj" />
+    <Compile Include="../../src/SharpDbg.AndroidAgent/AndroidDapServer.cs" Link="AndroidDapServer.cs" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>
