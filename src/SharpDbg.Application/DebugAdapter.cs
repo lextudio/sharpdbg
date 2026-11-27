@@ -415,14 +415,24 @@ public class DebugAdapter : IDapRequestHandler
 			});
 		};
 
-		_debugger.OnProcessStarted += (processId, name) =>
+		_debugger.OnLoadedSource += (reason, path) =>
+		{
+			if (!IsCurrentDebugger()) return;
+			Connection.SendEvent(new LoadedSourceEvent
+			{
+				Reason = reason == "removed" ? LoadedSourceEvent.ReasonValue.Removed : LoadedSourceEvent.ReasonValue.New,
+				Source = new Source { Path = path, Name = Path.GetFileName(path) }
+			});
+		};
+
+		_debugger.OnProcessStarted += (processId, name, isAttach) =>
 		{
 			if (!IsCurrentDebugger()) return;
 			Connection.SendEvent(new ProcessEvent
 			{
 				Name = name,
 				SystemProcessId = processId,
-				StartMethod = ProcessEvent.StartMethodValue.Launch,
+				StartMethod = isAttach ? ProcessEvent.StartMethodValue.Attach : ProcessEvent.StartMethodValue.Launch,
 				IsLocalProcess = true
 			});
 		};

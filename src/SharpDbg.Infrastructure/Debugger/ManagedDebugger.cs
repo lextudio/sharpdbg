@@ -96,11 +96,13 @@ public partial class ManagedDebugger
 	public event Action<int>? OnThreadExited;
 	public event Action<string, string, string>? OnModuleLoaded;
 	public event Action<string, string, string>? OnModuleUnloaded;
+	// Reason ("new"/"removed"), SourcePath
+	public event Action<string, string>? OnLoadedSource;
 	// Output text, isError (true for stderr, false for stdout)
 	public event Action<string, bool>? OnOutput;
 	// Debugger messages the user should see, e.g. a breakpoint condition that failed to evaluate
 	public event Action<string>? OnImportantOutput;
-	public event Action<int, string>? OnProcessStarted;
+	public event Action<int, string, bool>? OnProcessStarted;
 	// hitMessage: a message that belongs only to the current hit, e.g. a condition that failed to evaluate, shown in place of the breakpoint's own
 	public delegate void BreakpointChangedHandler(BreakpointInfo breakpoint, string? hitMessage = null);
 	public event BreakpointChangedHandler? OnBreakpointChanged;
@@ -299,7 +301,7 @@ public partial class ManagedDebugger
 			_logger?.Invoke($"Attached to process: {processId}");
 			var name = "";
 			try { name = Process.GetProcessById(processId).ProcessName; } catch { /* the process may have exited */ }
-			OnProcessStarted?.Invoke(processId, name);
+			OnProcessStarted?.Invoke(processId, name, true);
 			SendAllBreakpointEvents();
 		}
 	}

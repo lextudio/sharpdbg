@@ -84,7 +84,7 @@ public partial class ManagedDebugger
 
 		await ClrDebugExtensions.Automatic(processId, resumeDiagnosticSuspension: true,
 			onStartup: corDebug => AttachAtRuntimeStartup(corDebug, processId, process));
-		OnProcessStarted?.Invoke(processId, launchInfo.Program);
+		OnProcessStarted?.Invoke(processId, launchInfo.Program, false);
 		SendAllBreakpointEvents();
 		return;
 
@@ -136,7 +136,7 @@ public partial class ManagedDebugger
 		};
 
 		_logger?.Invoke($"Process created without debugging, PID: {process.Id}");
-		OnProcessStarted?.Invoke(process.Id, launchInfo.Program);
+		OnProcessStarted?.Invoke(process.Id, launchInfo.Program, false);
 
 		void ForwardOutput(string output, bool isError)
 		{

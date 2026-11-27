@@ -161,6 +161,11 @@ public partial class ManagedDebugger
 
 		// Fire the module loaded event
 		OnModuleLoaded?.Invoke(modulePath, Path.GetFileName(modulePath), modulePath);
+		if (metadataReader.HasSymbols)
+		{
+			foreach (var sourcePath in metadataReader.GetSourceFiles().Distinct(StringComparer.OrdinalIgnoreCase))
+				OnLoadedSource?.Invoke("new", sourcePath);
+		}
 
 		// Try to bind any pending breakpoints now that we have a new module with symbols
 		if (metadataReader.HasSymbols)
@@ -215,6 +220,11 @@ public partial class ManagedDebugger
 			}
 		}
 
+		if (moduleInfo.MetadataReader.HasSymbols)
+		{
+			foreach (var sourcePath in moduleInfo.MetadataReader.GetSourceFiles().Distinct(StringComparer.OrdinalIgnoreCase))
+				OnLoadedSource?.Invoke("removed", sourcePath);
+		}
 		OnModuleUnloaded?.Invoke(moduleInfo.ModulePath, moduleInfo.ModuleName, moduleInfo.ModulePath);
 		Continue();
 	}
