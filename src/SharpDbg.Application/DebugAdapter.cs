@@ -75,6 +75,7 @@ public class DebugAdapter : IDapRequestHandler
 	{
 		Connection = new DapConnection(input, output, this, new DapConnectionOptions { Log = _logger });
 		Connection.RegisterRequest<ResolveStackFrameArguments>();
+		Connection.RegisterRequest<ApplyDeltasArguments>();
 		Connection.RegisterRequest<VsCustomMessageArguments>();
 	}
 
@@ -90,6 +91,7 @@ public class DebugAdapter : IDapRequestHandler
 		ThreadsArguments args => Respond(args, HandleThreadsAsync),
 		StackTraceArguments args => Respond(args, HandleStackTraceAsync),
 		ResolveStackFrameArguments args => Respond(args, HandleResolveStackFrameAsync),
+		ApplyDeltasArguments args => Respond(args, HandleApplyDeltasAsync),
 		ScopesArguments args => Respond(args, HandleScopesAsync),
 		VariablesArguments args => Respond(args, HandleVariablesAsync),
 		EvaluateArguments args => Respond(args, HandleEvaluateAsync),
@@ -380,6 +382,7 @@ public class DebugAdapter : IDapRequestHandler
 			var env = GetConfigValue<Dictionary<string, string>>(config, "env") ?? [];
 			var stopAtEntry = GetConfigValue<bool?>(config, "stopAtEntry") ?? false;
 			var justMyCode = GetConfigValue<bool?>(config, "justMyCode") ?? true;
+			_debugger.EnableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
 			var console = GetConfigValue<string>(config, "console");
 			LaunchRequestConsoleType? launchRequestConsoleType = console switch
 			{
@@ -443,6 +446,7 @@ public class DebugAdapter : IDapRequestHandler
 				};
 			}
 			var justMyCode = GetConfigValue<bool?>(config, "justMyCode") ?? true;
+			_debugger.EnableEditAndContinue = GetConfigValue<bool?>(config, "enableEditAndContinue") ?? false;
 			if (remoteAttachInfo is null) _debugger.Attach(processId.Value, justMyCode);
 			else _debugger.AttachRemote(remoteAttachInfo, justMyCode);
 			return new AttachResponse();
@@ -556,6 +560,66 @@ public class DebugAdapter : IDapRequestHandler
 				Id = t.id,
 				Name = t.name
 			}).ToList()
+		});
+	}
+
+	private ValueTask<DapResult<ApplyDeltasResponse>> HandleApplyDeltasAsync(ApplyDeltasArguments arguments)
+	{
+		return RunLocked<ApplyDeltasResponse>("Failed to apply Edit and Continue deltas", () =>
+		{
+			if (!Guid.TryParse(arguments.Mvid, out var mvid))
+				throw new InvalidOperationException("sharpdbg/applyDeltas needs a valid mvid");
+			static byte[] Decode(string? value, string name)
+			{
+				if (string.IsNullOrWhiteSpace(value))
+					throw new InvalidOperationException($"sharpdbg/applyDeltas needs {name}");
+				try { return Convert.FromBase64String(value); }
+				catch (FormatException) { throw new InvalidOperationException($"sharpdbg/applyDeltas has invalid {name}"); }
+			}
+			static IReadOnlyList<SourceLineMap>? ParseLineMaps(JsonElement? node)
+			{
+				if (node is null) return null;
+				static InvalidOperationException Invalid() => new("sharpdbg/applyDeltas has invalid lineMaps");
+				if (node.Value.ValueKind is not JsonValueKind.Array) throw Invalid();
+				var result = new List<SourceLineMap>();
+				foreach (var map in node.Value.EnumerateArray())
+				{
+					if (map.ValueKind is not JsonValueKind.Object
+						|| !map.TryGetProperty("documentPath", out var documentPath)
+						|| documentPath.ValueKind is not JsonValueKind.String
+						|| string.IsNullOrEmpty(documentPath.GetString())
+						|| !map.TryGetProperty("unchangedLines", out var lines)
+						|| lines.ValueKind is not JsonValueKind.Array)
+						throw Invalid();
+					var ranges = new List<UnchangedLineRange>();
+					foreach (var line in lines.EnumerateArray())
+					{
+						if (line.ValueKind is not JsonValueKind.Object
+							|| !line.TryGetProperty("oldStartLine", out var oldStart) || oldStart.ValueKind is not JsonValueKind.Number
+							|| !line.TryGetProperty("newStartLine", out var newStart) || newStart.ValueKind is not JsonValueKind.Number
+							|| !line.TryGetProperty("lineCount", out var count) || count.ValueKind is not JsonValueKind.Number)
+							throw Invalid();
+						var range = new UnchangedLineRange(oldStart.GetInt32(), newStart.GetInt32(), count.GetInt32());
+						if (range.OldStartLine < 1 || range.NewStartLine < 1 || range.LineCount < 1) throw Invalid();
+						ranges.Add(range);
+					}
+					result.Add(new SourceLineMap(documentPath.GetString()!, ranges));
+				}
+				return result;
+			}
+
+			var metadata = Decode(arguments.Metadata, "metadata");
+			var il = Decode(arguments.Il, "il");
+			var pdb = string.IsNullOrWhiteSpace(arguments.Pdb) ? null : Decode(arguments.Pdb, "pdb");
+			var updatedMethodTokens = arguments.UpdatedMethodTokens ?? [];
+			if (updatedMethodTokens.Any(token => (token & unchecked((int)0xFF000000)) != 0x06000000 || (token & 0x00FFFFFF) == 0))
+				throw new InvalidOperationException("sharpdbg/applyDeltas has an invalid updatedMethodTokens entry");
+			var lineMaps = ParseLineMaps(arguments.LineMaps);
+			if (!_debugger.EnableEditAndContinue)
+				throw new InvalidOperationException("sharpdbg/applyDeltas requires enableEditAndContinue at launch");
+			var result = _debugger.ApplyDelta(mvid, metadata, il, pdb, updatedMethodTokens, lineMaps);
+			if (!result.Success) throw new InvalidOperationException(result.Message);
+			return new ApplyDeltasResponse { Applied = true, Message = result.Message, HResult = result.HResult };
 		});
 	}
 
