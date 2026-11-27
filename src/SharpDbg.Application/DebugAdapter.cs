@@ -491,6 +491,7 @@ public class DebugAdapter : IDapRequestHandler
 			SupportsConfigurationDoneRequest = true,
 			SupportsFunctionBreakpoints = true,
 			SupportsConditionalBreakpoints = true,
+			SupportsLogPoints = true,
 			SupportsHitConditionalBreakpoints = true,
 			SupportsEvaluateForHovers = true,
 			SupportsStepBack = false,
@@ -734,7 +735,8 @@ public class DebugAdapter : IDapRequestHandler
 				ConvertClientLineToDebugger(bp.Line),
 				bp.Condition,
 				bp.HitCondition,
-				bp.Column is null ? null : ConvertClientColumnToDebugger(bp.Column.Value)))
+				bp.Column is null ? null : ConvertClientColumnToDebugger(bp.Column.Value),
+				bp.LogMessage))
 			.ToArray() ?? [];
 		_sourceBreakpoints[sourcePath] = breakpointRequests;
 
