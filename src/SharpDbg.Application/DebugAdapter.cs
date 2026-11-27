@@ -121,6 +121,7 @@ public class DebugAdapter : IDapRequestHandler
 		ScopesArguments args => Respond(args, HandleScopesAsync),
 		VariablesArguments args => Respond(args, HandleVariablesAsync),
 		SetVariableArguments args => Respond(args, HandleSetVariableAsync),
+		LoadedSourcesArguments args => Respond(args, HandleLoadedSourcesAsync),
 		EvaluateArguments args => Respond(args, HandleEvaluateAsync),
 		ContinueArguments args => Respond(args, HandleContinueAsync),
 		NextArguments args => Respond(args, HandleNextAsync),
@@ -496,6 +497,7 @@ public class DebugAdapter : IDapRequestHandler
 			SupportsStepInTargetsRequest = false,
 			SupportsGotoTargetsRequest = false,
 			SupportsRestartRequest = true,
+			SupportsLoadedSourcesRequest = true,
 			// SharpDbg-specific: launch/attach decompileExternalCode, the symbolsNeeded event and the loadSymbols request.
 			AdditionalProperties = new JsonObject { ["supportsClientSymbols"] = true },
 			ExceptionBreakpointFilters =
@@ -959,6 +961,17 @@ public class DebugAdapter : IDapRequestHandler
 				Type = result.Type,
 				VariablesReference = result.VariablesReference
 			};
+		});
+	}
+
+	private ValueTask<DapResult<LoadedSourcesResponse>> HandleLoadedSourcesAsync(LoadedSourcesArguments arguments)
+	{
+		return RunLocked<LoadedSourcesResponse>("Failed to get loaded sources", () =>
+		{
+			var sources = _debugger.GetLoadedSources()
+				.Select(path => new Source { Path = path, Name = System.IO.Path.GetFileName(path) })
+				.ToList();
+			return new LoadedSourcesResponse { Sources = sources };
 		});
 	}
 
